@@ -9,9 +9,17 @@ WPF `Dispatcher.Invoke` can synchronously execute a callback and propagate its r
 | WPF | WinUI 3 |
 |---|---|
 | `Dispatcher.CheckAccess()` | `DispatcherQueue.HasThreadAccess` |
+| `Dispatcher.VerifyAccess()` | Check the owning queue and throw when access is invalid. |
 | `Dispatcher.BeginInvoke(...)` | `DispatcherQueue.TryEnqueue(...)` |
 | `Dispatcher.Invoke(...)` | Run directly when already on the owning thread, or enqueue and explicitly await/propagate completion when required. |
 | `DispatcherPriority` | `DispatcherQueuePriority` (`High`, `Normal`, `Low`); map intent, not enum names. |
+
+Preserve `VerifyAccess` as a guard on the captured owning queue; enqueueing instead would change its failure behavior:
+
+```csharp
+if (!dispatcherQueue.HasThreadAccess)
+    throw new InvalidOperationException("This operation requires the owning UI thread.");
+```
 
 ## Capture the Owning Queue
 
@@ -98,6 +106,18 @@ When the WPF call returned a value, use the same pattern with `Func<T>` and `Tas
 - Do not use `Task.Run` as a mechanical replacement for `Task.Factory.StartNew` or synchronous WPF code. Preserve cancellation, long-running semantics, ordering, and exception observation.
 - Recheck timers: WPF `DispatcherTimer`, `System.Threading.Timer`, `PeriodicTimer`, and composition/UI timers have different ownership and suspension behavior.
 
+For an existing C++/WinRT component, replace `CoreDispatcher.RunAsync` with `DispatcherQueue.TryEnqueue`, and use WIL to resume a coroutine on a WinUI queue:
+
+```cpp
+#include <winrt/Microsoft.UI.Dispatching.h>
+#include <wil/cppwinrt_helpers.h> // Include after the queue's projected header.
+
+// Inside the coroutine, using the owning UI queue:
+co_await wil::resume_foreground(dispatcherQueue);
+```
+
+Use the project's `Microsoft.Windows.ImplementationLibrary` dependency/version for WIL. This replaces `winrt::resume_foreground(CoreDispatcher)`; C# code does not need this dependency.
+
 ## WinUI Window Model
 
 WinUI `Window` is not a `DependencyObject` or `FrameworkElement`.
@@ -110,6 +130,8 @@ WinUI `Window` is not a `DependencyObject` or `FrameworkElement`.
 | `SizeToContent` | Measure content and size the `AppWindow`, or redesign the layout with an explicit/responsive size. |
 | `WindowStartupLocation` | Position through `AppWindow` and `DisplayArea`, respecting monitor work areas and DPI. |
 | `Closing` / cancellation | Use the supported WinUI/`AppWindow` closing event and preserve hide-to-tray or cancellation behavior. |
+| `Loaded` / `Unloaded` | Attach these handlers to the hosted `FrameworkElement`, not the WinUI `Window`. |
+| `Icon` / `ShowInTaskbar` | Use `AppWindow.SetIcon(path)` / `AppWindow.IsShownInSwitchers`; the latter also affects Alt-Tab. |
 
 A useful structure is a thin top-level window that hosts the actual view:
 
@@ -162,11 +184,35 @@ Keep HWND/`WindowId` conversion at the platform boundary instead of spreading it
 
 `AppWindow` sizing APIs use physical pixels while XAML layout uses effective pixels/DIPs. Account for the target monitor's scale and for changes after moving between monitors.
 
-- Size after enough content exists to measure; constructor-time `XamlRoot` information may be unavailable.
-- Avoid hard-coded title-bar/chrome heights.
-- Respect the display work area and minimum/maximum sizes.
-- Recalculate when DPI, display, content, localization, or text scale changes if the window is content-sized.
-- Test long localized strings and accessibility text scaling instead of matching one WPF pixel size.
+For a normal overlapped window, measure after the hosted view loads. Bound the available client area using the monitor's work area and the current non-client size. `ResizeClient` calculates the required window chrome; do not add a fixed title-bar height:
+
+```csharp
+if (window.Content is FrameworkElement content && content.XamlRoot is { } root)
+{
+    DisplayArea display = DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Nearest);
+    double scale = root.RasterizationScale;
+    int chromeWidth = Math.Max(0, appWindow.Size.Width - appWindow.ClientSize.Width);
+    int chromeHeight = Math.Max(0, appWindow.Size.Height - appWindow.ClientSize.Height);
+    int maxWidth = Math.Max(1, display.WorkArea.Width - chromeWidth);
+    int maxHeight = Math.Max(1, display.WorkArea.Height - chromeHeight);
+    content.Measure(new Windows.Foundation.Size(maxWidth / scale, maxHeight / scale));
+    int width = (int)Math.Ceiling(Math.Clamp(content.DesiredSize.Width * scale, 1, maxWidth));
+    int height = (int)Math.Ceiling(Math.Clamp(content.DesiredSize.Height * scale, 1, maxHeight));
+    appWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
+}
+```
+
+Apply the application's minimum/maximum sizes too; scroll overflowing content. Recalculate after navigation, content/localization/text-scale changes, and monitor/DPI changes. On targets without `ResizeClient`, calculate the outer rectangle with the target DPI's window styles before calling `Resize`.
+
+Detach old page handlers before attaching the new page; `OnPageLoaded` can run the measurement above:
+
+```csharp
+if (previousPage is not null)
+    previousPage.Loaded -= OnPageLoaded;
+currentPage.Loaded += OnPageLoaded;
+```
+
+If the new page is already loaded, measure immediately. Detach the current page and any `XamlRoot.Changed` handlers when the window closes. Avoid unconditional resizing from `LayoutUpdated`/`SizeChanged`, which can trigger another layout/resize cycle.
 
 Example center calculation once the window and display area are known:
 
@@ -229,6 +275,8 @@ Keep `DataContext`, local resources, and visual states on the hosted view. `Wind
 | Window size and minimum/maximum bounds | `Width`/`Height`, `MinWidth`/`MinHeight`, `MaxWidth`/`MaxHeight`, in device-independent pixels (DIPs). |
 | `ResizeMode` and caption-button restrictions | Set `IsResizable`, `IsMinimizable`, and `IsMaximizable` separately to preserve the intended behavior. |
 | `Topmost` | `IsAlwaysOnTop`. |
+| `WindowState` | `WindowState` (`Normal`, `Minimized`, `Maximized`). |
+| Taskbar and Alt-Tab visibility | `IsShownInSwitchers`; verify both behaviors when replacing `ShowInTaskbar`. |
 | Standard title-bar visibility | `IsTitleBarVisible`; custom chrome still needs its drag regions and caption behavior. |
 | Center on the current monitor | `CenterOnScreen()`; optional width/height arguments use DIPs, unlike the physical pixels accepted by `AppWindow`. |
 | Restore window placement across sessions | A stable `PersistenceId`, set before first activation, with persistence storage appropriate to the deployment model. |
@@ -239,10 +287,25 @@ Packaged applications can use WinUIEx's default `ApplicationData` storage. For a
 
 ## Title Bars and Presenters
 
-- Preserve standard title-bar behavior unless custom chrome is a requirement.
-- For a custom title bar, use the supported `Window`/`AppWindowTitleBar` APIs and call `SetTitleBar` with a XAML element when appropriate.
-- Preserve drag regions, caption buttons, system menu, keyboard behavior, snap layouts, High Contrast, and right-to-left layout.
-- Map minimize/maximize/resize restrictions through the current `AppWindow` presenter rather than copying WPF properties into XAML that WinUI `Window` does not expose.
+Keep standard chrome unless custom chrome is required. Map window-state commands to the overlapped presenter:
+
+```csharp
+if (appWindow.Presenter is OverlappedPresenter presenter)
+{
+    presenter.Maximize(); // In the maximize command.
+    // Use presenter.Minimize() or presenter.Restore() in their respective commands.
+}
+appWindow.SetIcon(iconPath); // An icon file available in the deployed application.
+```
+
+For a custom XAML title bar on a supported target:
+
+```csharp
+window.ExtendsContentIntoTitleBar = true;
+window.SetTitleBar(appTitleBar);
+```
+
+Preserve drag regions, caption buttons, system menu, keyboard behavior, snap layouts, High Contrast, and right-to-left layout. Use `AppWindowTitleBar.IsCustomizationSupported()` where required by the target SDK/OS support range. Set presenter resize/minimize/maximize restrictions separately.
 
 ## ContentDialog Ownership
 
@@ -299,28 +362,43 @@ Do not cargo-cult the HWND initialization into the newer picker API, and do not 
 
 ## Closing and Process Lifetime
 
-Port the intent behind WPF close handling:
+For a tray application whose close button hides the window, set `exitRequested` in its explicit Exit command:
 
-- Cancel-and-hide behavior for tray applications.
-- Save/discard prompts and async cleanup.
-- Last-window shutdown versus background service lifetime.
-- Multiple-window ownership and app-instance redirection.
-- Cleanup that must run even when activation or initialization fails.
+```csharp
+appWindow.Closing += (_, args) =>
+{
+    if (exitRequested) return; // Explicit Exit must still close the application.
+    args.Cancel = true;
+    appWindow.Hide();
+};
+```
 
-Avoid `async void` close handlers that let the window disappear before a prompt or save finishes unless the event contract requires it and reentrancy is controlled.
+For an async save/discard prompt, cancel closing synchronously, prevent a second prompt while the first is pending, then request close again only after confirmation using a bypass flag. Preserve last-window/background lifetime and cleanup on failed activation. Do not let an `async void` handler close the window before the awaited prompt finishes.
 
 ## Custom Entry Points
 
 Keep the generated WinUI entry point unless the process genuinely needs work before XAML application startup, such as a dual CLI/GUI mode, custom app-instance redirection, or native initialization.
 
-If a custom entry point is required:
+If required, start from the installed target SDK's generated `Main` and retain its apartment/runtime initialization. Append the symbol without replacing existing constants:
 
-- Follow the target Windows App SDK template/version for COM wrappers, `Application.Start`, dispatcher synchronization context, and apartment initialization.
-- Keep UI creation on the correct STA/UI thread.
-- Separate CLI/shared logic into UI-neutral libraries rather than constructing the WinUI `Application` for non-UI execution.
-- Validate packaged and unpackaged activation paths separately.
+```xml
+<DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+```
 
-Do not copy a `Program.cs` from another application without matching its Windows App SDK version and deployment model.
+Keep the GUI initialization order used by that template. A C# template with these APIs has this sequence inside its `[STAThread]` entry point:
+
+```csharp
+WinRT.ComWrappersSupport.InitializeComWrappers();
+Microsoft.UI.Xaml.Application.Start(p =>
+{
+    var queue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+    var context = new Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(queue);
+    System.Threading.SynchronizationContext.SetSynchronizationContext(context);
+    _ = new App();
+});
+```
+
+Preserve any additional initialization in the target template. Route a recognized non-UI command before XAML startup, initializing any WinRT services that command needs; do not create a WPF `Application` to obtain a dispatcher. Keep GUI creation on its STA thread and avoid an awaited entry point that resumes GUI startup on a worker. Validate the application's deployment and activation paths; arbitrary arguments may be activation data, not a request for CLI mode.
 
 ## Official References
 
@@ -333,3 +411,5 @@ Do not copy a `Program.cs` from another application without matching its Windows
 - [WinUIEx window base and XAML setup](https://dotmorten.github.io/WinUIEx/concepts/WindowEx.html)
 - [WinUIEx `CenterOnScreen`](https://dotmorten.github.io/WinUIEx/api/WinUIEx.WindowExtensions.CenterOnScreen.html)
 - [WinUIEx `PersistenceId`](https://dotmorten.github.io/WinUIEx/api/WinUIEx.WindowManager.PersistenceId.html) and [`PersistenceStorage`](https://dotmorten.github.io/WinUIEx/api/WinUIEx.WindowManager.PersistenceStorage.html)
+- [WIL coroutine helpers](https://github.com/microsoft/wil/blob/master/include/wil/cppwinrt_helpers.h)
+- [`AppWindow.ResizeClient`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.windowing.appwindow.resizeclient), [`IsShownInSwitchers`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.windowing.appwindow.isshowninswitchers), and [`Closing`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.windowing.appwindow.closing)

@@ -1,153 +1,115 @@
 # Project and Application Migration
 
-Use this reference when changing project files, application lifecycle, MVVM, localization, shared libraries, or compatibility contracts.
+Use this reference for project files, application startup, MVVM, resources, installer inputs, and tests.
 
-## Select the Target Before Editing the Project
+## Project File Migration
 
-Record the current and intended values for:
+Keep the application's deployment and compatibility requirements while replacing WPF project items.
+Check the target framework, minimum Windows version, architectures, and centrally managed package versions before editing.
+For scaffolding, SDK prerequisites, analyzer setup, and build/run commands, use `winui-dev-workflow`.
 
-- Packaged, packaged with external location, or unpackaged deployment.
-- Windows App SDK framework-dependent or self-contained deployment.
-- .NET framework-dependent or self-contained publishing. This is separate from Windows App SDK self-containment.
-- Target framework, minimum Windows version, processor architectures, and Windows App SDK version.
-- Single-project MSIX, a separate packaging project, or no package.
-- Existing activation extensions, capabilities, file/protocol associations, COM registration, installer behavior, and update identity.
+| Property or artifact | Migration action |
+|---|---|
+| `UseWPF` / `UseWinUI` | Remove WPF compilation from the migrated app and set `<UseWinUI>true</UseWinUI>`. Move remaining WPF callers first. |
+| `TargetFramework` | Use the solution's supported Windows TFM; do not copy a fixed .NET or Windows SDK version from another migration. |
+| `RuntimeIdentifier` / `RuntimeIdentifiers` | Keep supported architectures and the native dependencies needed by each. |
+| `WindowsPackageType=None` | Use only for the intended deployment configuration. Unpackaged and packaged-with-external-location scenarios use it for automatic Windows App SDK initialization. |
+| `WindowsAppSDKSelfContained` | Controls bundling the Windows App SDK runtime; do not change framework-dependent deployment merely to fix startup. |
+| `SelfContained` | Controls .NET runtime deployment separately from Windows App SDK self-containment. |
+| `Package.appxmanifest` | Preserve packaged identity, capabilities, assets, and activation extensions. |
+| `app.manifest` | Preserve Win32 execution-level and compatibility declarations; it does not provide package identity. |
+| `DISABLE_XAML_GENERATED_MAIN` | Add only for a required custom entry point; otherwise keep generated startup. See [Threading and Windowing](threading-and-windowing.md). |
 
-These are independent decisions. Do not copy a property group from another application and assume it expresses the same deployment model.
+Check `Microsoft.WindowsAppSDK`, the template's build-tool references, and any native/WinRT dependencies against the chosen project.
+Remove obsolete WPF-only packages after replacing their callers.
+For package mappings and CsWinRT projection changes, see [Namespace and API Mapping](namespace-api-mapping.md).
 
-## Migration Shape
+### XAML and Resource Items
 
-### Parallel application project
-
-Prefer a parallel WinUI project when the WPF application is large, must remain runnable during the migration, or has substantial non-UI logic that should move into shared libraries.
-
-```text
-WPF app -----\
-              -> UI-neutral libraries -> services / models / contracts
-WinUI app ---/
-```
-
-Keep the two application projects as composition roots. Avoid referencing one executable project from the other; put reusable behavior in a library with no WPF or WinUI dependency where practical.
-
-### In-place conversion
-
-An in-place conversion can work for a small application with shallow WPF coupling. Before changing the SDK properties, make a recoverable checkpoint and inventory every WPF-only asset, resource, build target, and generated file.
-
-### Temporary hybrid boundary
-
-If a staged migration intentionally retains WPF in a separate process, library, or XAML Island boundary, document:
-
-- Which project owns the WPF dependency.
-- How data crosses the boundary.
-- Threading and lifetime ownership.
-- Deployment implications.
-- The condition for keeping or removing the boundary.
-
-Do not let an accidental `<UseWPF>true</UseWPF>` in the WinUI application become an undocumented architecture.
-
-## Project File Decisions
-
-A WinUI application project normally includes `UseWinUI`, but the target framework and package versions should follow the solution rather than a hard-coded sample:
+When `App.xaml` has a nonstandard path and needs explicit classification, avoid compiling it as both a page and an application definition:
 
 ```xml
-<PropertyGroup>
-  <UseWinUI>true</UseWinUI>
-</PropertyGroup>
+<ItemGroup>
+  <Page Remove="UI\App.xaml" />
+  <ApplicationDefinition Include="UI\App.xaml" />
+</ItemGroup>
 ```
 
-Keep the repository-supported `TargetFramework` value or change it as a separately justified compatibility decision.
+Do not add this item group when the target SDK already classifies the default `App.xaml` correctly.
 
-Review these properties semantically:
-
-| Property or artifact | Use it when |
+| Item | Check after moving files |
 |---|---|
-| `<UseWinUI>true</UseWinUI>` | The project compiles WinUI XAML. |
-| `<WindowsPackageType>None</WindowsPackageType>` | The official configuration calls for it. It is used by unpackaged and packaged-with-external-location scenarios for automatic Windows App SDK runtime initialization; the mechanism differs between framework-dependent and self-contained deployment. Do not add it as an incidental launch workaround. |
-| `<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>` | The selected deployment bundles the Windows App SDK runtime. It is not required for framework-dependent deployment. |
-| `<SelfContained>true</SelfContained>` / publish settings | The selected .NET deployment is self-contained. This is a separate decision from `WindowsAppSDKSelfContained`. |
-| `Package.appxmanifest` | The packaged application identity, capabilities, assets, and activation extensions. Preserve it for a packaged target. |
-| `app.manifest` | Win32 process metadata such as requested execution level and compatibility declarations. It is not a replacement for package identity. |
-| `ApplicationDefinition` | The SDK's default item classification is insufficient because `App.xaml` uses a nonstandard path or has an item conflict. Current templates usually do not require a hand-written item; if one is added, avoid also compiling the file as `Page`. |
-| `DISABLE_XAML_GENERATED_MAIN` | A custom entry point is genuinely required for pre-XAML initialization or a nonstandard process mode. Do not enable it just because the WPF app had `Main`. |
+| XAML `Page` items | Paths, `x:Class`, namespaces, and generated partial classes agree. |
+| `PRIResource` | The intended `.resw` files enter the PRI resource index; avoid duplicate explicit/default items. |
+| `Content` and assets | Icons and images reach the intended build/publish/package output. |
+| `ApplicationIcon` and RC references | All references follow the new asset location, including native resource scripts. |
+| Generated resource code | Remove obsolete `Resources.Designer.cs` and its generator settings only after migrating every caller. |
+| Old helpers and manifests | Remove unused observable/command helpers, WPF converters, and replaced manifests after checking all configurations. |
 
-Also check:
+Keep managed `.resx` resources that shared libraries still use.
+Do not delete an old manifest merely because its name differs from a template's.
+Preserve assembly names, root namespaces, and internal visibility used by tests, native callers, or serialization.
+An existing assembly attribute can remain, or follow the repository's project-item convention:
 
-- Central package/version management before adding versioned references.
-- `RuntimeIdentifier`/`RuntimeIdentifiers` and supported architectures.
-- XAML `Page`, `ApplicationDefinition`, `PRIResource`, `Content`, and asset items.
-- Root namespace, assembly name, default namespace, `x:Class`, and generated-code assumptions.
-- Native/WinRT references, CsWinRT projections, COM registration, and architecture-specific binaries.
-- Custom build targets that still expect WPF-generated files or output paths.
+```xml
+<ItemGroup>
+  <InternalsVisibleTo Include="ExampleApp.Tests" />
+</ItemGroup>
+```
 
-Remove WPF references only after their callers have moved. Conversely, do not keep `PresentationCore`, `PresentationFramework`, `WindowsBase`, `Microsoft.WindowsDesktop.App.WPF`, or WPF-only packages in the final WinUI application without a documented reason.
+If moving the attribute into the project, remove the old declaration to avoid duplication.
+Before completing the app conversion, check for remaining `PresentationCore`, `PresentationFramework`, `WindowsBase`, `Microsoft.WindowsDesktop.App.WPF`, and WPF-only packages.
 
-## Application Lifecycle
+## Shared Logic and Application Startup
 
-Do not overwrite the target template's `App.xaml` or `App.xaml.cs`. Merge behavior intentionally:
+When a CLI and GUI share behavior, move that behavior into a library:
 
-| WPF responsibility | WinUI migration question |
+```text
+ExampleApp.Cli -> ExampleApp.Core
+ExampleApp.UI  -> ExampleApp.Core
+```
+
+Do not make the CLI reference the GUI executable just to reuse models or file processing.
+Executable references can copy unwanted `.exe`, `.deps.json`, or `.runtimeconfig.json` files into consumers' output.
+Fix the reference graph and inspect build/publish outputs before updating installer file lists.
+Keep UI-thread work at the view/view-model boundary, and preserve the application's existing service construction or DI pattern.
+
+Do not overwrite the generated WinUI `App.xaml` or `App.xaml.cs`. Merge the old responsibilities:
+
+| WPF responsibility | WinUI migration action |
 |---|---|
-| `StartupUri` | Which window/page is created during activation? |
-| `Application_Startup` / `OnStartup` | Which initialization belongs before or after XAML application startup? |
-| `Application_Exit` / `OnExit` | Which cleanup is process-wide, window-scoped, or service-owned? |
-| `Application.Current.MainWindow` | How will the app track one or more top-level windows explicitly? |
-| `ShutdownMode` | What closes the process when multiple windows, tray behavior, or background work exists? |
-| WPF command-line startup | How do launch arguments interact with package/protocol/file activation and app-instance redirection? |
+| `StartupUri` | Create and activate the intended window and initial page. |
+| `Application_Startup` / `OnStartup` | Place existing initialization at the appropriate point in WinUI startup. |
+| `Application_Exit` / `OnExit` | Preserve cleanup and service shutdown. |
+| `Application.Current.MainWindow` | Track the application's window explicitly. |
+| `ShutdownMode` | Preserve exit behavior when windows close or background work remains. |
+| Command-line or registered activation | Preserve argument parsing, registered entry points, and the behavior they invoke. |
 
-Preserve the template's COM wrappers, dispatcher synchronization context, activation plumbing, and generated entry point unless the application has a demonstrated need to replace them.
+Keep required COM wrappers, dispatcher synchronization context, and activation plumbing.
+Preserve the existing package identity, publisher, associations, aliases, and COM registration where applicable.
+Do not change deployment or invent a new activation architecture as a side effect of replacing WPF startup.
+Merge application resource dictionaries after the template's platform resources; see [XAML Migration](xaml-migration.md).
 
-## Package Identity, Activation, and Parallel Development
+## MVVM Migration
 
-For a released packaged application, package identity is part of the upgrade contract. Preserve the production identity, publisher relationship, capabilities, aliases, and manifest extensions in the final target unless the product intentionally creates a new app.
+WinUI does not require a new MVVM framework. Keep the current framework unless replacing it is part of the task.
+When replacing custom `Observable` / `RelayCommand` infrastructure with CommunityToolkit.Mvvm, preserve behavior as well as public property and command names.
 
-When WPF and WinUI packaged projects must coexist during development:
+| Existing implementation | Toolkit migration |
+|---|---|
+| Custom observable base | Derive from `ObservableObject`; make generated types `partial`. |
+| Plain field-backed property | Use `[ObservableProperty]` with the syntax supported by the selected compiler and Toolkit version. |
+| Stored default value | Keep it in the generated property's initializer. |
+| Dependent computed property | Add `[NotifyPropertyChangedFor]` to **each** input that changes its result. |
+| Command enablement | Preserve `CanExecute` and its invalidation, including `[NotifyCanExecuteChangedFor]` where appropriate. |
+| Custom setter logic | Preserve normalization, validation, side effects, and notification order; do not replace it with a plain generated property. |
+| Custom command | Use `[RelayCommand]` only after preserving arguments, cancellation, exception handling, and the generated command's name. |
 
-- Give development builds a temporary identity/display name or avoid installing both packages at once; two independently installed packages cannot safely claim the same production identity.
-- Keep production identity values in a controlled final-packaging path rather than casually copying them into every local project.
-- Test a real upgrade from the last released package to the WinUI package. A clean install does not prove settings, file associations, aliases, or app data survive.
-- Validate signing/publisher compatibility and architecture transitions used by the actual update channel.
-
-For file, protocol, toast, startup-task, command-line, or other activation:
-
-1. Inventory every manifest extension and the data shape delivered for cold activation.
-2. Decide whether the app is single-instance, keyed multi-instance, or multi-window.
-3. If using `AppInstance`, register/find the correct key and redirect secondary activation before creating duplicate UI.
-4. Route both cold and redirected activation through one application-owned handler.
-5. Select or create the correct window, then marshal the activation to that window's UI queue.
-6. Test cold activation, activation while running, multiple files/URIs, invalid input, and activation during startup/shutdown.
-
-Do not stop at preserving the manifest row. The runtime activation handler and window-routing behavior are equally part of the contract.
-
-## Legacy Settings and App Data
-
-WPF settings may live in `user.config`, an application-owned file under a legacy path, the registry, or another store. Packaged WinUI app data can resolve to a different identity-scoped location. Determine the actual released path and schema before choosing a migration.
-
-A robust one-time migration is:
-
-1. On first compatible WinUI launch, check whether the new store already contains a completed schema.
-2. Read the legacy store through a narrowly scoped compatibility reader; do not require the WPF UI framework merely to parse simple data.
-3. Map old names, enum values, paths, and defaults into the new schema.
-4. Write the new store atomically, validate it, then record an idempotent migration marker.
-5. Leave the old data intact unless product policy explicitly allows deletion and rollback is no longer needed.
-6. Log/report recoverable parse errors without overwriting readable legacy data with defaults.
-
-Test with fixtures copied from each supported released schema and with the real old-version-to-new-version package upgrade path.
-
-## Shared Logic and Executable Boundaries
-
-- Put models, serialization, file processing, protocol contracts, and other reusable behavior in UI-neutral libraries.
-- Avoid executable-to-executable project references. If a CLI and GUI share logic, have both reference a library.
-- Keep UI-thread concepts out of domain services. Pass an abstraction or dispatch at the view/view-model boundary.
-- Preserve assembly names and `InternalsVisibleTo` relationships when tests, native code, reflection, or external callers depend on them.
-- Check trimming, AOT, reflection, source generators, and COM activation when moving code between projects.
-
-## MVVM Is an Explicit Architecture Choice
-
-WinUI 3 does not require CommunityToolkit.Mvvm. Preserve the existing MVVM framework if it remains supported and the user did not ask for an architectural rewrite.
-
-If replacing custom observable/command infrastructure is in scope, migrate behavior rather than only syntax. First confirm the repository's C# language version, compiler/IDE, and CommunityToolkit.Mvvm version. When they support the current partial-property generator syntax, prefer it over the older field-backed pattern:
+When the toolchain supports partial-property generation:
 
 ```csharp
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using System.Text.Json.Serialization;
 
 public partial class EditorViewModel : ObservableObject
@@ -162,43 +124,59 @@ public partial class EditorViewModel : ObservableObject
     public string DisplayName => Name.Trim();
 
     [RelayCommand(CanExecute = nameof(CanSave))]
-    private void Save()
-    {
-        // Persist changes.
-    }
+    private void Save() { /* Persist changes. */ }
 
     private bool CanSave() => !string.IsNullOrWhiteSpace(Name);
 }
 ```
 
-Put `[JsonPropertyName]` directly on the partial property; do not carry over `[property: JsonPropertyName(...)]` from the field-backed form. Move the old default value into the property initializer and keep dependent-property and command notifications, such as `[NotifyPropertyChangedFor]` and `[NotifyCanExecuteChangedFor]`.
+`Save` generates `SaveCommand`. Check existing XAML and callers before changing a method name.
+Put JSON attributes directly on a partial property, without the field pattern's `property:` target.
 
-If the existing toolchain does not support partial properties, keep the compatible pattern temporarily or make the compiler/Toolkit upgrade an explicit, separately validated part of the migration. Do not silently raise the language or package baseline just to copy this example. On WinUI/WinRT targets, field-backed `[ObservableProperty]` can report `MVVMTK0045` for AOT compatibility. Respect the repository's warning-as-error settings and validate the intended publish path rather than suppressing the diagnostic.
+For a setter that transforms the incoming value, keep a hand-written property:
 
-During conversion, preserve:
+```csharp
+public partial class FileViewModel : ObservableObject
+{
+    private string name = "";
 
-- Property names used by classic binding or serialization.
-- Property-change dependencies and command `CanExecute` invalidation.
-- Validation interfaces and error presentation.
-- Async command cancellation and exception behavior.
-- Design-time/test construction paths.
+    [JsonPropertyName("name")]
+    public string Name
+    {
+        get => name;
+        set => SetProperty(ref name, NormalizeName(value));
+    }
 
-Do not rewrite every `{Binding}` to `{x:Bind}` merely because the view model changed. Choose the binding form based on the view's source and lifetime; see [XAML Migration](xaml-migration.md).
+    private static string NormalizeName(string value) => value.Trim();
+}
+```
 
-## Localization and Resources
+Keep the old transformation and null/error behavior; `Trim` only illustrates the pattern.
+Retain validation interfaces, serialization attributes, async command behavior, and design-time/test construction.
 
-WPF `.resx` and WinUI `.resw` serve overlapping but not identical roles.
+Check the actual compiler, language version, and Toolkit version before adopting partial properties.
+Field-based `[ObservableProperty]` can produce the WinRT/AOT warning `MVVMTK0045`; warning-as-error policy determines whether it fails the build.
+Do not silently upgrade the toolchain or suppress the warning to copy an example.
+Keep a supported implementation, or make the required upgrade part of the task and validate its intended publish output.
 
-- Use `.resw` plus `x:Uid` for WinUI XAML localization.
-- A managed library may keep `.resx` resources when they are not XAML resources and callers already depend on the generated strongly typed API.
-- Do not mechanically rename a `.resx` file to `.resw`; verify the resource build action, folder layout, key format, and generated PRI resource map.
-- Preserve stable resource identifiers where localization tooling or external automation depends on them.
+Changing the view model does not require replacing every `{Binding}` with `{x:Bind}`.
+Preserve the source, lifetime, and update behavior described in [XAML Migration](xaml-migration.md).
 
-Example:
+## Localization and Resource Access
+
+For UI strings moving from generated WPF resources to WinUI localization:
+
+1. Put localized `.resw` files in the project's language folders, such as `Strings/en-US/Resources.resw`.
+2. Verify the resource build items, resource map, and generated PRI file.
+3. Convert localized XAML properties to `x:Uid` and property-suffixed keys.
+4. Replace code calls to the migrated `Properties.Resources` accessor.
+5. Remove its obsolete designer/generator only after migrating the callers and localization tooling.
 
 ```xml
 <Button x:Uid="SaveButton" />
 ```
+
+Corresponding `.resw` entries name the target properties:
 
 ```xml
 <data name="SaveButton.Content" xml:space="preserve">
@@ -209,58 +187,157 @@ Example:
 </data>
 ```
 
-For strings requested in code, use the resource API and map appropriate to the project. Avoid resolving UI resources in static field initializers because tests, CLI paths, or early process startup may run before the resource context is ready. Delay lookup until the application/resource environment exists.
+Preserve stable identifiers or update every consumer of a renamed key.
+Keep non-XAML `.resx` resources where shared code still uses their generated API; not every resource must become `.resw`.
 
-## CLI Package Upgrades
+### Named PRI Files and Deferred Lookup
 
-A WPF-to-WinUI migration does not require upgrading System.CommandLine. If upgrading to System.CommandLine 2.0 is also in scope, pass the option name and aliases to `Option<T>` and set `Description` separately. A second string argument is an alias, not a description:
+If the application uses a custom PRI filename, keep the build property, deployed file, and runtime lookup in agreement:
+
+```xml
+<PropertyGroup>
+  <ProjectPriFileName>ExampleApp.pri</ProjectPriFileName>
+</PropertyGroup>
+```
+
+Reuse the application's resource accessor. A small accessor can defer creation until the resource environment is ready:
+
+```csharp
+using System;
+using Microsoft.Windows.ApplicationModel.Resources;
+
+internal sealed class AppStrings
+{
+    private readonly Lazy<ResourceLoader> loader =
+        new(() => new ResourceLoader("ExampleApp.pri"));
+
+    public string GetString(string key) => loader.Value.GetString(key);
+}
+```
+
+Use the constructor and resource map that match the actual PRI layout; a custom map may require its own name.
+Do not copy a PRI filename from another app or assume every map is named `Resources`.
+A delayed constructor does not initialize Windows App SDK for a CLI or test process: establish the required runtime first.
+
+Do not resolve resource-dependent formats or token dictionaries in static field initializers.
+Store stable resource keys and resolve them when needed, or use deferred initialization after resources are available.
+Keep live language-change behavior if the application supports it; avoid freezing localized values in process-wide caches.
+Tests can supply a deterministic string lookup to resource-consuming code instead of constructing the real loader.
+
+## CLI Options and Compatibility
+
+A WPF migration does not require a System.CommandLine upgrade.
+If version 2.0 is also in scope, its `Option<T>` constructor takes a name and aliases; set the description separately:
 
 ```csharp
 var destination = new System.CommandLine.Option<string>("--destination", "-d")
 {
-    Description = resourceLoader.GetString("DestinationDescription"),
+    Description = strings.GetString("DestinationDescription"),
 };
 ```
 
-Use the application's initialized resource accessor for the description. Also audit parsing, handlers, and invocation APIs against the chosen package version. Preserve published option names, aliases, defaults, and exit codes; compare help output and representative invocations after the package upgrade.
+Use the initialized application accessor for `strings`.
+Check parsing, handlers, help output, defaults, and exit codes against the selected package version.
 
-## Preserve Compatibility Contracts
+| Contract | Preserve and verify |
+|---|---|
+| Settings and serialized data | Existing file paths, JSON/XML names, enum numeric values, defaults, and deserialization of released fixtures. |
+| File/image formats | Existing values and supported output behavior; see [Imaging Migration](imaging-migration.md). |
+| CLI | Published option names, aliases, argument meaning, exit codes, and stdout/stderr behavior. |
+| IPC and COM | Message schemas, identifiers, registration, threading, bitness, and both callers and receivers. |
+| Activation and localization | Existing file/protocol registrations, package identity, resource keys, and consumers. |
 
-Audit more than public C# APIs:
+When removing a WPF type from persisted data, use an application-owned representation that preserves its serialized value.
+Do not introduce a new settings store or schema merely because the UI framework changed.
 
-- JSON/XML property names, enum numeric values, defaults, and migration logic.
-- Settings paths and upgrade behavior.
-- File formats, image codec identifiers, and metadata policies.
-- Command-line option names, exit codes, and stdout/stderr behavior.
-- Named pipes, sockets, app services, RPC, IPC messages, and version negotiation.
-- COM CLSIDs/IIDs, registration, threading model, and bitness.
-- Protocol/file activation identifiers and package family identity.
-- Resource keys used by tests, automation, or localization pipelines.
+If IPC changes are necessary, update both ends together.
+For bidirectional communication, test both settings/commands reaching the application and application state reaching the controller.
+Do not consider preservation of a message class alone proof that the integration still works.
 
-When a WPF type leaked into a stored schema or protocol, introduce an application-owned compatibility representation with the same serialized value instead of requiring the WPF assembly solely for deserialization.
+## Installer and Build Pipeline
+
+When the application has installer, packaging, or signing steps, follow the new output through all of them:
+
+| Change or symptom | Required action |
+|---|---|
+| Old `<App>.resources.dll` is no longer produced; WiX reports `WIX0103` | Remove obsolete satellite-assembly component/file entries and unused locale-directory entries. Keep satellite assemblies still produced by retained `.resx` resources. |
+| UI resources moved to PRI/assets | Include the generated PRI and required assets at the paths expected by the installed application. |
+| Output directory or binary name changed | Update installer inputs, component-generation scripts, copy steps, signing file lists, and CI artifact paths together. |
+| Unexpected GUI host files appear in CLI/root output | Fix executable project references or output-copy rules, then regenerate file components from intended outputs. |
+| File components are generated | Use the repository's generator after outputs are available; inspect the XML diff for stale files, duplicate components, and incorrect destinations. |
+| Signing fails or misses a file | Match signing inputs to the final binaries and preserve the existing signing/publisher policy. |
+
+Edit installer XML as XML. Do not strip filenames with text replacement and leave broken component definitions.
+Check both files that must be present and obsolete files that must no longer be installed.
+Use `winui-packaging` for release packaging commands when packaging is in scope.
+
+### Project-Relative Build Paths
+
+`$(SolutionDir)` may be unavailable when a project builds directly.
+Resolve scripts and inputs relative to the file that defines them, and quote paths containing spaces:
+
+```xml
+<!-- Inside the existing resource-generation target -->
+<Exec Command="powershell -NoProfile -File &quot;$(MSBuildThisFileDirectory)..\tools\GenerateResources.ps1&quot;" />
+```
+
+Adapt the relative path to its owning project or imported targets file.
+Check existing build hooks and project-only build entry points without inventing new repository-wide build steps.
+
+### Packaging Order and Asset References
+
+A `PreBuildEvent` cannot package binaries that the same build has not produced.
+Place custom collection, packaging, and signing targets after the build/publish targets whose outputs they consume.
+Use the correct MSBuild dependency or `AfterTargets` relationship; a blanket `PostBuildEvent` is not a substitute for understanding a publish pipeline.
+Keep package output outside the input layout and exclude stale package files from subsequent collections.
+
+After moving an icon, update the project, native RC script, and installer references.
+In an RC string, escape backslashes correctly:
+
+```c
+IDI_APP_ICON ICON "..\\Assets\\App.ico"
+```
+
+Respect the repository's file encoding and formatting conventions instead of adding unrelated normalization changes.
 
 ## Test Adaptation
 
-- Keep behavior tests around UI-neutral libraries independent of either UI framework.
-- Convert tests to async when the replacement API is async; do not block the UI thread with `.Result` or `.Wait()`.
-- Update numeric assertions where WinRT uses unsigned dimensions or different units.
-- Initialize the required package/resource/window environment only for tests that actually need it.
-- Compare semantic output, tolerances, metadata, and error behavior rather than expecting different rendering or codec implementations to be byte-identical.
-- Add upgrade tests for persisted settings and activation tests for packaged/unpackaged entry paths when those contracts exist.
+Run only the checks permitted by the repository; use its test runner and build restrictions.
 
-For a released packaged app, include an acceptance matrix:
-
-| Scenario | What to verify |
+| Test surface | Migration action |
 |---|---|
-| Clean install | Startup, defaults, resources, capabilities, and activation. |
-| Last released version → WinUI upgrade | Package identity, app data/settings import, shortcuts/aliases, file/protocol associations, and user-visible state. |
-| Cold activation | Each file/protocol/command entry creates the correct state/window. |
-| Activation while running | App-instance redirection, deduplication, window selection, focus, and error handling. |
-| Multi-window activation | Input routes to the intended existing/new window without cross-window dispatcher or `XamlRoot` mistakes. |
-| Failed/cancelled migration | Legacy data remains recoverable and a retry is safe. |
+| Models and shared processing | Keep ordinary unit tests independent of the XAML runtime. Preserve transformations, validation, property notifications, and command enablement. |
+| Old-versus-new comparisons still using WPF | If the old comparison code needs WPF, temporarily set `<UseWPF>true</UseWPF>` in that test project and remove it after porting the tests. Keep it out of the migrated app. |
+| Async replacements | Return `Task` from tests and await the API; do not block a UI thread with `.Result` or `.Wait()`. |
+| WinRT numeric results | Match the expected type, for example `96u` for a `uint` pixel dimension, and preserve units/tolerances. |
+| Resource consumers | Supply a deterministic lookup and test formatting, validation messages, missing-key behavior, and other existing behavior. |
+| Real PRI/localization | Exercise the deployed resource file, expected maps/keys, languages, and fallback with the required runtime available. |
+| XAML objects | Use a WinUI test application and its UI-thread test mechanism, such as `[UITestMethod]`; an ordinary test process is not a XAML host. |
+| Settings and IPC | Use isolated settings locations and released data fixtures; verify both communication directions where supported. |
 
-## Official Deployment References
+For a resource consumer that accepts a `Func<string, string>`, a test lookup can be:
 
-- [Windows app packaging and deployment overview](https://learn.microsoft.com/windows/apps/package-and-deploy/deploy-overview)
-- [Deploy Windows App SDK apps that are unpackaged](https://learn.microsoft.com/windows/apps/windows-app-sdk/deploy-unpackaged-apps)
+```csharp
+Func<string, string> getString = key => key switch
+{
+    "NameRequired" => "Enter a name.",
+    _ => throw new KeyNotFoundException(key),
+};
+```
+
+Supply it through the application's existing constructor/property seam and assert the consumer's behavior.
+If an existing static accessor is replaced for tests, restore it afterwards and isolate tests that mutate it.
+Keep separate integration tests for actual resource lookup; do not delete behavior tests because the real loader is unavailable.
+
+For tests referencing WinUI projects, align the Windows target framework, architecture, and required runtime with the app.
+Tests needing XAML objects require the supported XAML test host and UI thread, not a direct `new App()` workaround.
+For pixel reads, metadata assertions, unsafe buffer access, and codec comparisons, see [Imaging Migration](imaging-migration.md).
+When installer validation is permitted, verify the installed app finds its runtime, PRI/assets, settings, and existing entry points.
+
+## References
+
+- [Windows app packaging and deployment](https://learn.microsoft.com/windows/apps/package-and-deploy/deploy-overview)
 - [Windows App SDK self-contained deployment](https://learn.microsoft.com/windows/apps/package-and-deploy/self-contained-deploy/deploy-self-contained-apps)
+- [ResourceLoader constructors](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.windows.applicationmodel.resources.resourceloader.-ctor)
+- [MVVM Toolkit warning MVVMTK0045](https://learn.microsoft.com/dotnet/communitytoolkit/mvvm/generators/errors/mvvmtk0045)
+- [Testing WinUI applications](https://learn.microsoft.com/windows/apps/winui/winui3/testing/create-winui-unit-test-project)

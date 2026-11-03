@@ -26,6 +26,15 @@ Typical namespace change:
 
 Use `using:` for application CLR namespaces. Remove WPF-only library namespaces only after replacing their elements, markup extensions, and styles.
 
+Replace WPF resource declarations that use `xmlns:sys="clr-namespace:System;assembly=mscorlib"` with XAML intrinsic types:
+
+| WPF | WinUI 3 |
+|---|---|
+| `sys:String` | `x:String` |
+| `sys:Int32` | `x:Int32` |
+| `sys:Boolean` | `x:Boolean` |
+| `sys:Double` | `x:Double` |
+
 ## Classify WPF-Only Markup
 
 | WPF construct | WinUI migration |
@@ -188,11 +197,46 @@ Compiled binding can convert `bool` to `Visibility` in supported scenarios:
     Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
 ```
 
-For classic binding, template bindings, or other conversions, use an existing converter or visual state before creating a new converter. A WinUI `IValueConverter` receives `string language` as its last parameter.
+### Value Converter Decision Guide
+
+Use the first matching option. Reuse the project's converters where they already express the required behavior.
+
+| Conversion need | WinUI migration |
+|---|---|
+| Selected, pointer-over, pressed, or disabled state inside a `ControlTemplate` | Use the control's visual states and setters; keep the inactive value on the element instead of converting a state property. |
+| `bool` → `Visibility` with `x:Bind` property binding | Bind the Boolean directly as above. This compiler conversion does not apply to classic `Binding` or function binding. |
+| `bool` → `Visibility` with classic `Binding` | A shared `CommunityToolkit.WinUI.Converters.BoolToVisibilityConverter`, when Toolkit converters are selected. |
+| Numeric value or collection count → `Visibility` | `DoubleToVisibilityConverter` with `GreaterThan` / `LessThan`; for nonempty collections use `GreaterThan="0"`. |
+| Inverse of a Toolkit Boolean or numeric conversion | Reuse the converter with `ConverterParameter=True`. The `BoolToObjectConverter` and `DoubleToObjectConverter` families support this; it is not a convention for every converter. |
+| Framework `CornerRadius` → `Rectangle.RadiusX` / `RadiusY` | Check the target SDK's `XamlControlsResources` for `TopLeftCornerRadiusDoubleValueConverter` and `BottomRightCornerRadiusDoubleValueConverter`; preserve available resources instead of reimplementing them. |
+| App-specific conversion without an existing equivalent | Implement WinUI `IValueConverter`; both `Convert` and `ConvertBack` take `string language` instead of `CultureInfo culture`. |
+
+For Toolkit converters, reference `CommunityToolkit.WinUI.Converters` using the project's package/version conventions and declare `xmlns:converters="using:CommunityToolkit.WinUI.Converters"` on the view. Visibility converters default to `Visible` / `Collapsed`. One resource can show either the populated or empty state:
+
+```xml
+<Page.Resources>
+    <converters:DoubleToVisibilityConverter x:Key="CountToVisibility" GreaterThan="0" />
+</Page.Resources>
+<StackPanel>
+    <ItemsControl ItemsSource="{Binding Items}"
+                  Visibility="{Binding Items.Count, Converter={StaticResource CountToVisibility}}" />
+    <TextBlock Text="No items"
+               Visibility="{Binding Items.Count, Converter={StaticResource CountToVisibility}, ConverterParameter=True}" />
+</StackPanel>
+```
 
 ### Relative sources and style setters
 
-Review WPF `RelativeSource FindAncestor` and template bindings individually. Support and source context differ from WPF. Prefer typed `x:Bind`, `ElementName`, `TemplatedParent`, or moving the binding to the element/template when the original form is not valid.
+`RelativeSource Self` and `RelativeSource TemplatedParent` are supported in WinUI; use `TemplatedParent` within a control template. WPF `FindAncestor` is not supported. Use `ElementName`, typed `x:Bind`, or expose the required value to the template.
+
+When the project uses `CommunityToolkit.WinUI.Extensions`, its `FrameworkElementExtensions.AncestorType` / `Ancestor` attached properties provide another option. With `xmlns:extensions="using:CommunityToolkit.WinUI"` on the view:
+
+```xml
+<StackPanel Spacing="12">
+    <TextBlock extensions:FrameworkElementExtensions.AncestorType="StackPanel"
+               Text="{Binding (extensions:FrameworkElementExtensions.Ancestor).Spacing, RelativeSource={RelativeSource Self}}" />
+</StackPanel>
+```
 
 Current WinUI styles do not support the WPF pattern of putting a `Binding` directly in `Setter.Value`. Move the binding to the target element/control template, use a visual state, or expose a computed property instead of copying the setter.
 
@@ -252,8 +296,10 @@ Place `DataContext`, local resources, visual states, and responsive layout on th
 | `Visibility.Hidden` | `Collapsed` if space should disappear; `Opacity="0"` plus intentional hit-testing/layout behavior if space must remain. |
 | `Focusable` | Usually `IsTabStop`; also verify programmatic focus and automation semantics. |
 | `ContextMenu` | `ContextFlyout`. |
+| `SnapsToDevicePixels` | Remove the WPF property; review WinUI layout rounding and the resulting pixel alignment. |
+| `TextBox.VerticalScrollBarVisibility` | Use the attached property, for example `<TextBox ScrollViewer.VerticalScrollBarVisibility="Auto" />`. |
 | `TextWrapping.WrapWithOverflow` | Use WinUI `TextWrapping.WrapWholeWords` on a control that supports it, such as `TextBlock`; it preserves overflow for an unbreakable word. `TextBox` and `RichEditBox` reject `WrapWholeWords`, so use `Wrap` only after accepting and testing the changed long-word behavior, or redesign width/scrolling behavior. |
-| `IsDefault` / `IsCancel` | Design primary action and handle Enter/Escape/keyboard accelerators where the containing surface does not provide them. |
+| `IsDefault` / `IsCancel` | `AccentButtonStyle` supplies primary-action styling only; handle Enter/Escape/keyboard accelerators where the containing surface does not provide them. |
 | `PreviewMouse*` | Redesign with pointer events; there is no blanket name substitution. |
 | `PreviewKeyDown` / `PreviewKeyUp` | Available on WinUI `UIElement`; keep when behavior still fits. |
 | `Mouse*` handlers | Use pointer/gesture events and update event argument types. |
@@ -266,15 +312,17 @@ WPF `CombinedGeometry` and complex `UIElement.Clip` expressions do not map mecha
 
 ## WPF-UI and Other WPF Control Libraries
 
-When the source uses a WPF styling/control library:
+Map each library control's behavior before removing its namespace and package. Common WPF-UI replacements:
 
-1. List every library control and the behavior it contributes.
-2. Search current native WinUI and Windows Community Toolkit samples.
-3. Prefer native controls when they meet the requirement.
-4. Add a replacement package only after checking maintenance, Windows App SDK compatibility, AOT/trimming, accessibility, and license.
-5. Port application styles separately from control behavior; a similarly named control is not necessarily equivalent.
+| WPF-UI item | WinUI migration |
+|---|---|
+| `ui:FluentWindow` / `ui:TitleBar` | A WinUI window with the target SDK's title-bar APIs; preserve custom drag regions and caption behavior. See [Threading and Windowing](threading-and-windowing.md). |
+| `ui:ThemesDictionary` / `ui:ControlsDictionary` | Replace the WPF dictionaries with `XamlControlsResources` and application theme resources, as shown above. |
+| `ui:NumberBox` | Native `NumberBox`; set `Mode=TwoWay` when user edits must update the source. |
+| `ui:InfoBar` / `ui:SymbolIcon` / `ui:Button` | Native controls with the same names; recheck enum values and custom styles. |
+| `ui:ProgressRing` | Native `ProgressRing`; `IsActive` controls activity, while `IsIndeterminate` selects indeterminate progress. Preserve both behaviors rather than treating these properties as synonyms. |
 
-Examples such as WPF-UI `FluentWindow`, `NumberBox`, `InfoBar`, `ProgressRing`, and `SymbolIcon` may have native WinUI counterparts, but custom title-bar, windowing, and style behavior still require review.
+For missing layout/header controls, use the [Toolkit package map](namespace-api-mapping.md#toolkit-controls-and-package-names). Prefer native controls when they fit; check compatibility and required behavior before adding a replacement library.
 
 ## XAML Validation Pass
 
@@ -294,3 +342,4 @@ Examples such as WPF-UI `FluentWindow`, `NumberBox`, `InfoBar`, `ProgressRing`, 
 - [WinUI `DataTemplate`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.datatemplate)
 - [WinUI data template selector](https://learn.microsoft.com/windows/apps/develop/ui/controls/data-template-selector)
 - [WinUI `TextWrapping`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.textwrapping)
+- [Toolkit FrameworkElement extensions and ancestor binding](https://learn.microsoft.com/dotnet/communitytoolkit/windows/extensions/frameworkelementextensions)

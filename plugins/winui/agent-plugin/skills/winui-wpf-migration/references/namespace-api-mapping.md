@@ -67,19 +67,19 @@ Search current samples with `winui-design` before choosing a dependency or writi
 | `ToolBar` / `ToolBarTray` | `CommandBar` and app bar buttons | Overflow, labels, keyboard accelerators, responsive layout. |
 | `StatusBar` | App-specific `Grid`/`StackPanel`, `InfoBar`, or inline status | Persistent status versus actionable notification. |
 | `TabControl` | `TabView`, top `NavigationView`, or a selector plus content | Close/reorder semantics, document tabs, navigation history. |
-| `DataGrid` | Simple `ListView`/`ItemsRepeater`/`ItemsView` composition, or a maintained third-party grid | Editing, sorting, grouping, virtualization, clipboard, keyboard, automation, licensing. WinUI 3 has no first-party `DataGrid`; do not hard-code one community project as the universal replacement. |
-| `WrapPanel` | `ItemsRepeater` with a suitable layout, `GridView`, or a maintained Toolkit/community panel | Variable item size, selection, virtualization, wrapping rules. |
-| `UniformGrid` | `UniformGridLayout` or a maintained Toolkit/community control | Items versus arbitrary child elements, virtualization, fixed rows/columns. |
-| `DockPanel` | `Grid` or a maintained Toolkit/community panel | Whether dock behavior is truly needed or a fixed grid is clearer. |
-| `GridSplitter` | A maintained Toolkit/community splitter or app-specific pointer/keyboard behavior | Accessibility, min/max sizing, pane persistence. |
-| `GroupBox` | `Expander`, header + border, or a headered community control | Collapsible behavior, semantics, keyboard navigation. |
-| `Ribbon` | `CommandBar`, `NavigationView`, or an evaluated third-party/Labs control | Feature completeness and accessibility. |
+| `DataGrid` | Evaluate [WinUI.TableView](https://github.com/w-ahmad/WinUI.TableView) or another grid; use `ListView`/`ItemsRepeater`/`ItemsView` composition for simpler tables | Editing, sorting, grouping, virtualization, clipboard, keyboard, automation, licensing. WinUI 3 has no first-party `DataGrid`. |
+| `WrapPanel` | Toolkit `WrapPanel`, `ItemsRepeater` with a suitable layout, or `GridView` | Variable item size, selection, virtualization, wrapping rules. |
+| `UniformGrid` | Toolkit `UniformGrid` for child elements or `UniformGridLayout` for item layout | Items versus arbitrary child elements, virtualization, fixed rows/columns. |
+| `DockPanel` | Toolkit `DockPanel` or `Grid` | Whether dock behavior is truly needed or a fixed grid is clearer. |
+| `GridSplitter` | Toolkit `GridSplitter` or app-specific pointer/keyboard behavior | Accessibility, min/max sizing, pane persistence. |
+| `GroupBox` | `Expander`, header + border, or Toolkit `HeaderedContentControl` | Collapsible behavior, semantics, keyboard navigation. |
+| `Ribbon` | `CommandBar`, `NavigationView`, or the experimental [Toolkit Labs Ribbon](https://github.com/CommunityToolkit/Labs-Windows/tree/main/components/Ribbon) | Feature completeness and accessibility. |
 | `RichTextBox` | `RichEditBox` | Document format, clipboard, spellcheck, printing. |
 | `FlowDocument` / `DocumentViewer` | `RichTextBlock`, `WebView2` for supported web/HTML/PDF content, a dedicated PDF/XPS/document component, or architectural redesign | Pagination, printing, annotations, and the actual document format. Do not assume WebView2 directly replaces XPS/document semantics. |
 | `WebBrowser` | `WebView2` | Initialization, profile/data folder, navigation security. |
 | `MediaElement` | `MediaPlayerElement` | Playback lifecycle and media transport controls. |
 | `Label` / `AccessText` | `TextBlock` or control header/content plus `AccessKey` | Label association, mnemonics, automation name. |
-| `Adorner` / `AdornerLayer` | `Popup`, `TeachingTip`, `InfoBar`, validation template, drag UI, or overlay layer | The original adorner's purpose. |
+| `Adorner` / `AdornerLayer` | Use the purpose-specific mapping below | Validation, resize handles, drag preview, overlay, or watermark. |
 
 Archived or legacy controls can be valid for compatibility, but confirm maintenance status, supported Windows App SDK versions, AOT/trimming behavior, and license before adding them.
 
@@ -93,6 +93,16 @@ For a WPF `DataGrid`, inventory these behaviors before selecting or implementing
 - Frozen columns, resizing/reordering, headers, context menus, and automation used by tests.
 
 A simple read-only table and a spreadsheet-like editor are different migration problems; do not choose the same replacement by control name alone.
+
+### Adorners by purpose
+
+| WPF adorner use | WinUI migration |
+|---|---|
+| Validation indicator | `TeachingTip`, `InfoBar`, or validation visuals in the input control's template. |
+| Resize handles | A `Popup` or overlay aligned with the target; preserve pointer and keyboard resizing. |
+| Drag preview | `DragStarting` exposes `DragUI` for the visual; `ListView`/`GridView` also expose `DragItemsStarting` for the item data payload. |
+| Overlay decoration | A `Canvas` overlay or `Popup` layer positioned relative to the target. |
+| Watermark / placeholder | `TextBox.PlaceholderText` when the requirement is an empty-field hint. |
 
 ## Input and Routed Events
 
@@ -116,7 +126,7 @@ Do not bulk rename handler methods without reviewing their event arguments and b
 |---|---|
 | `RoutedUICommand` / `CommandBinding` | Bind a C# `System.Windows.Input.ICommand`, use an existing MVVM command, or use `StandardUICommand`/`XamlUICommand` where platform semantics fit. |
 | `ApplicationCommands.*` | Platform command, keyboard accelerator, or application-owned command. |
-| `IValueConverter` with `CultureInfo` | WinUI converter with `string language`; first check whether `x:Bind`, a visual state, or an existing converter removes the need. |
+| `IValueConverter` with `CultureInfo` | WinUI converter with `string language`; use the [converter decision guide](xaml-migration.md#value-converter-decision-guide) for visual states, built-in conversions, and Toolkit choices. |
 | `MultiBinding` | `x:Bind` function binding, a computed view-model property, or an application-owned aggregate object. |
 
 ## Platform API Replacements
@@ -144,7 +154,38 @@ Only add packages required by the selected design:
 | Custom observable/command base | Existing MVVM framework or CommunityToolkit.Mvvm if an MVVM migration is explicitly in scope. |
 | WPF Toolkit controls | Current Windows Community Toolkit packages or another maintained component after verification. |
 
-Do not specify a stale package version or assume the NuGet package ID matches its XAML namespace. Confirm the current sample and package metadata before editing the project.
+### Toolkit controls and package names
+
+Use these candidates when the native controls do not provide the required behavior. The `Controls.*` package IDs differ from their shared XAML namespace:
+
+| WPF / UI requirement | Toolkit control | NuGet package | XAML namespace |
+|---|---|---|---|
+| `WrapPanel` | `WrapPanel` | `CommunityToolkit.WinUI.Controls.Primitives` | `using:CommunityToolkit.WinUI.Controls` |
+| `UniformGrid` | `UniformGrid` | `CommunityToolkit.WinUI.Controls.Primitives` | `using:CommunityToolkit.WinUI.Controls` |
+| `DockPanel` | `DockPanel` | `CommunityToolkit.WinUI.Controls.Primitives` | `using:CommunityToolkit.WinUI.Controls` |
+| `GroupBox` / headered content | `HeaderedContentControl`, `HeaderedItemsControl`, `HeaderedTreeView` | `CommunityToolkit.WinUI.Controls.HeaderedControls` | `using:CommunityToolkit.WinUI.Controls` |
+| Settings rows / sections | `SettingsCard`, `SettingsExpander` | `CommunityToolkit.WinUI.Controls.SettingsControls` | `using:CommunityToolkit.WinUI.Controls` |
+| Resizable panes / content | `GridSplitter`, `PropertySizer`, `ContentSizer` | `CommunityToolkit.WinUI.Controls.Sizers` | `using:CommunityToolkit.WinUI.Controls` |
+
+`Primitives` also supplies `ConstrainedBox` and `SwitchPresenter`. For converters and ancestor binding, see [XAML Migration](xaml-migration.md#value-converter-decision-guide): `CommunityToolkit.WinUI.Converters` uses `using:CommunityToolkit.WinUI.Converters`, while `CommunityToolkit.WinUI.Extensions` exposes `FrameworkElementExtensions` through `using:CommunityToolkit.WinUI`.
+
+The legacy `CommunityToolkit.WinUI.UI.Controls.DataGrid` package is an archived option for existing grid code, not the current `Controls.*` family. Select packages and versions from the required behavior and target Windows App SDK; confirm package metadata and sample namespaces before adding references.
+
+## Native WinRT Component References
+
+When the app consumes an existing native WinRT component, check its `.winmd` input, C# projection, project/package reference, and deployed native binary for each target architecture. Preserve the existing projection strategy unless it must change for the target SDK.
+
+If the project filters app-owned metadata with CsWinRT, use the component's actual namespace. For a component in `ExampleComponent`:
+
+```xml
+<PropertyGroup>
+  <CsWinRTIncludes>ExampleComponent</CsWinRTIncludes>
+</PropertyGroup>
+```
+
+Do not regenerate Windows or WinUI types already supplied by the SDK projections. Check any existing `CsWinRTGeneratedFilesDir` override and generated compile items so moved files are neither omitted nor compiled twice. Keep the SDK's default generated-output location when no override is needed. Replace a separate projection-project reference only after verifying that the chosen project/package setup supplies the same managed types and native runtime files.
+
+See the [CsWinRT usage guide](https://github.com/microsoft/CsWinRT/blob/master/docs/usage.md) for the selected tool version's metadata and projection options.
 
 ## Official API References
 
