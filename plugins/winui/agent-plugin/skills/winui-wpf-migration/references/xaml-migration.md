@@ -1,6 +1,6 @@
 # XAML Migration
 
-Use this reference when porting WPF XAML, resources, bindings, templates, styles, or localization. Preserve behavior and accessibility; do not translate syntax without understanding what the original construct did.
+Use this reference when porting WPF XAML, resources, bindings, templates, styles, or localization.
 
 ## XML Namespace Declarations
 
@@ -42,14 +42,12 @@ Replace WPF resource declarations that use `xmlns:sys="clr-namespace:System;asse
 | `{DynamicResource Key}` | `{ThemeResource Key}` only for theme-reactive resources; `{StaticResource}` for fixed resources; binding or code for other dynamic values. |
 | `{x:Static ...}` | `x:Uid` for localized properties, `x:Bind`/function binding for accessible members, or code/resource lookup. |
 | `{x:Type ...}` | `x:DataType` on typed templates, or an application-owned type reference in code. |
-| `{x:Array}` / object-data providers | Create or expose the collection from code/view model. |
-| `MultiBinding` | `x:Bind` function, computed view-model property, or aggregate value object. |
-| `Style.Triggers` / `DataTrigger` | Visual states, direct binding, a computed property, a supported WinUI data-trigger behavior when the project already uses behaviors, or a custom control whose states own the behavior. |
+| `{x:Array}` | Create or expose the collection from code/view model. |
+| `MultiBinding` | `x:Bind` function or computed view-model property. |
+| `Style.Triggers` / `DataTrigger` | `VisualStateManager` with `StateTrigger` for data-driven states, or the control's visual states for control-state triggers. |
 | WPF `EventTrigger` actions | Visual-state transitions, behaviors that support WinUI, or explicit event/command handling. |
 | `Window.Resources` / `Window.DataContext` | Put the view in a `Page`, `UserControl`, or root `FrameworkElement` and place resources/context there. |
 | `pack://` URI | Use the asset URI appropriate to the deployment model; packaged content commonly uses `ms-appx:///`. |
-
-Do not use a find-and-replace for these constructs. One WPF `DynamicResource`, trigger, or `MultiBinding` can encode application behavior that requires a new view-model property or control state.
 
 ## Resource Semantics
 
@@ -81,11 +79,9 @@ Current WinUI project templates place `XamlControlsResources` first in `Applicat
 </Application.Resources>
 ```
 
-Do not claim that every custom project is broken merely because the entry is absent; compare with the target Windows App SDK template and understand how its default control resources are supplied.
-
 ### Theme dictionaries
 
-Preserve Light, Dark, and High Contrast behavior. Use semantic resource names rather than copying fixed WPF colors:
+Use Light, Dark, and High Contrast theme dictionaries:
 
 ```xml
 <ResourceDictionary.ThemeDictionaries>
@@ -100,8 +96,6 @@ Preserve Light, Dark, and High Contrast behavior. Use semantic resource names ra
     </ResourceDictionary>
 </ResourceDictionary.ThemeDictionaries>
 ```
-
-For substantial theming or accessibility work, load `winui-design` rather than duplicating its rules here.
 
 ## Localization: x:Static to x:Uid
 
@@ -126,7 +120,7 @@ WinUI XAML localization commonly uses `x:Uid` and `.resw` keys that name the tar
 </data>
 ```
 
-Do not blindly rename `.resx` to `.resw`. Keep managed `.resx` resources where they remain appropriate for shared/non-XAML code, and preserve stable identifiers used by localization tooling or automation.
+Keep managed `.resx` resources where still needed. XAML `.resw` keys name target properties, so renaming the file alone is insufficient.
 
 ## Typed Templates
 
@@ -160,13 +154,10 @@ Both classic `{Binding}` and `{x:Bind}` are valid in WinUI 3.
 | Default mode | `OneWay` | `OneTime` |
 | Resolution | Runtime | Generated/compiled code |
 | Function binding | No | Yes |
-| Best migration use | Existing DataContext-driven views and dynamic sources | Typed views with stable compile-time sources |
 
-Do not rewrite every binding form. Preserve the view architecture unless changing it is part of the migration.
+Inside a `DataTemplate`, `x:Bind` uses the item type declared by `x:DataType`; inside a `ControlTemplate`, it uses the templated parent declared by `TargetType`.
 
-An `{x:Bind}` path changes context at a template boundary. `x:DataType` declares the data-object type inside a `DataTemplate`, while `ControlTemplate.TargetType` declares the templated-parent type. Do not expect the outer view model to remain the implicit source inside either template.
-
-Do not assume that preserving `{Binding}` preserves its effective mode. In WPF, an omitted `Mode` uses `BindingMode.Default`, whose effective value comes from the target dependency property's metadata; user-editable properties such as `TextBox.Text` and `ToggleButton.IsChecked` bind two-way by default. WinUI `{Binding}` defaults to `OneWay`. Audit WPF bindings that omit `Mode`, and set `Mode=TwoWay` explicitly in WinUI wherever edits must update the source.
+WPF bindings with an omitted `Mode` can be two-way through the target property's metadata, as with `TextBox.Text` and `ToggleButton.IsChecked`. WinUI `{Binding}` defaults to `OneWay`; set `Mode=TwoWay` wherever edits must update the source.
 
 ### Explicit modes and TextBox updates
 
@@ -176,7 +167,7 @@ Do not assume that preserving `{Binding}` preserves its effective mode. In WPF, 
 <TextBox Text="{x:Bind ViewModel.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 ```
 
-`x:Bind` defaults to `OneTime`. For two-way `TextBox.Text`, the source normally updates on lost focus; specify `UpdateSourceTrigger=PropertyChanged` when validation, commands, or other UI must react to each edit.
+For two-way `TextBox.Text`, the source normally updates on lost focus; specify `UpdateSourceTrigger=PropertyChanged` when validation, commands, or other UI must react to each edit.
 
 ### MultiBinding
 
@@ -185,7 +176,7 @@ Do not assume that preserving `{Binding}` preserves its effective mode. In WPF, 
 <TextBlock Text="{x:Bind local:Formatters.FullName(ViewModel.FirstName, ViewModel.LastName), Mode=OneWay}" />
 ```
 
-Alternatively expose a `FullName` property and raise its change notification when either input changes. Prefer that when the value belongs to application semantics rather than presentation formatting.
+Alternatively expose a `FullName` property and raise its change notification when either input changes.
 
 ### Boolean to Visibility
 
@@ -262,16 +253,12 @@ Use visual states when the behavior belongs to the visual surface:
 </Border>
 ```
 
-For a standard control's pointer-over, pressed, disabled, selected, or focused behavior, start from its existing visual states. Do not replace the full control template merely to reproduce a small WPF trigger unless a lightweight style or existing state cannot express the requirement.
+For a standard control's pointer-over, pressed, disabled, selected, or focused behavior, use its existing visual states.
 
 ## Styles and Templates
 
-- When an implicit style is intended to extend the platform control style, base it on the current default style key instead of accidentally replacing the whole style/template.
-- Verify the correct default key from current samples; do not assume every control uses `DefaultButtonStyle`-like naming.
-- Keep app-specific resources after `XamlControlsResources` so overrides are deliberate.
+- When extending a platform control style, use `BasedOn` with its default style key; verify the actual key in the target SDK.
 - Recheck visual-state names; WPF `MouseOver` commonly becomes WinUI `PointerOver`.
-- Recheck `TemplateBinding`, `ContentPresenter`, focus visuals, automation, and High Contrast behavior after copying a template.
-- Prefer a built-in control plus small style changes over a copied platform template that will drift across Windows App SDK versions.
 
 ## Window Content
 
@@ -287,7 +274,7 @@ WinUI `Window` is not a `FrameworkElement`. A common structure is a thin window 
 </Window>
 ```
 
-Place `DataContext`, local resources, visual states, and responsive layout on the hosted view or its root element. Track window-level state in the window/application layer; see [Threading and Windowing](threading-and-windowing.md).
+Place `DataContext`, local resources, and visual states on the hosted view or its root element; see [Threading and Windowing](threading-and-windowing.md).
 
 ## WPF Property and Event Differences
 
@@ -322,15 +309,11 @@ Map each library control's behavior before removing its namespace and package. C
 | `ui:InfoBar` / `ui:SymbolIcon` / `ui:Button` | Native controls with the same names; recheck enum values and custom styles. |
 | `ui:ProgressRing` | Native `ProgressRing`; `IsActive` controls activity, while `IsIndeterminate` selects indeterminate progress. Preserve both behaviors rather than treating these properties as synonyms. |
 
-For missing layout/header controls, use the [Toolkit package map](namespace-api-mapping.md#toolkit-controls-and-package-names). Prefer native controls when they fit; check compatibility and required behavior before adding a replacement library.
+For missing layout/header controls, use the [Toolkit package map](namespace-api-mapping.md#toolkit-controls-and-package-names).
 
-## XAML Validation Pass
+## XAML Formatting
 
-- Search again for `clr-namespace:`, WPF-only namespaces, `DynamicResource`, `x:Static`, `x:Type`, `MultiBinding`, triggers, `pack://`, WPF event names, and `Window.Resources`.
-- Validate bindings that compile but have the wrong source or default mode.
-- Exercise empty, loading, error, disabled, selected, keyboard-focus, Light, Dark, and High Contrast states.
-- Confirm localized text, access keys, automation names, and right-to-left layout where supported.
-- Use the repository's XAML formatter; do not copy another repository's formatting command or BOM policy.
+Apply the repository's XAML formatter after migration.
 
 ## Official References
 

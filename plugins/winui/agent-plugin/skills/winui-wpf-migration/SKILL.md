@@ -14,35 +14,7 @@ Port WPF code to WinUI 3 while preserving the application's behavior, deployment
 - Adapt observable properties, commands, resources, and tests during a WPF migration.
 - Fix project, runtime, installer, or signing failures caused by that migration.
 
-Use `winui-design` for target-control samples and visual design, and `winui-dev-workflow` for project setup, per-app analyzers, and build/launch verification. Preserve the migration's required behavior and deployment when using those workflows. Use `winui-packaging` when packaging or distribution is in scope.
-
-## Before Editing
-
-Read the affected application, shared libraries, tests, and build/installer files. Identify:
-
-- The target framework, minimum Windows version, Windows App SDK version, and supported architectures.
-- Packaged, packaged-with-external-location, or unpackaged deployment, and the separate .NET and Windows App SDK runtime-deployment choices.
-- Existing MVVM/DI conventions, resource accessors, window base classes, and package-version management.
-- Settings names and values, command-line options, activation identifiers, and IPC/COM contracts that callers already use.
-- The repository's permitted build, test, launch, and packaging checks.
-
-Inventory WPF dependencies and markup outside generated output:
-
-```powershell
-rg -n -g '!**/bin/**' -g '!**/obj/**' 'UseWPF|Microsoft\.WindowsDesktop\.App\.WPF|Presentation(Core|Framework)|System\.Windows' .
-rg -n -g '*.xaml' -g '!**/bin/**' -g '!**/obj/**' 'DynamicResource|x:Static|x:Type|MultiBinding|Style\.Triggers|DataTrigger|EventTrigger|Window\.Resources|clr-namespace:|pack://' .
-rg -n -g '*.cs' -g '!**/bin/**' -g '!**/obj/**' 'Dispatcher|Window\.Current|Application\.Current\.MainWindow|MessageBox|File(Open|Save)Picker|FolderPicker|System\.Windows\.Media\.Imaging' .
-```
-
-Before implementing replacements, verify APIs against the restored target WinUI project's references. With WinApp CLI 0.7+, run from that app directory:
-
-```powershell
-winapp find-api DispatcherQueue --json --project-dir .
-winapp find-api members DispatcherQueue --filter TryEnqueue --json --project-dir .
-winapp find-api check-property ListView ItemsSource SelectionMode --json --project-dir .
-```
-
-Use either `--project-dir <app-directory>` or `--project <name>` for project selection, never both. Use `winapp find-ui` for usage examples. If the lookup tool is unavailable, inspect the target packages and official API documentation and identify any assumptions that remain unverified.
+Use `winui-design` for control samples, `winui-dev-workflow` for project setup and build/run commands, and `winui-packaging` when packaging is in scope. Keep the target project's versions, deployment, and required behavior when using those workflows.
 
 ## Migration Sequence
 
@@ -126,4 +98,3 @@ Read the reference that matches the current phase:
 - [ ] Installer inventories and signing inputs match the actual build/publish output.
 - [ ] Tests exercise the same image, resource, and application behavior as before the migration.
 - [ ] The intended published output is validated; use `winui-dev-workflow` for Native AOT publish/run steps and `winui-packaging`'s `references/sourcegen-patterns.md` for trimming/binding/serialization guidance.
-- [ ] Required repository checks pass, or any skipped check is identified with its governing restriction.

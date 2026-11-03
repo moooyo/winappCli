@@ -42,9 +42,7 @@ public sealed class UiUpdater
 
 `Action` and `DispatcherQueueHandler` are distinct delegate types, so an `Action` value cannot be passed directly even though both signatures are `void ()`; the target-typed lambda adapts the callback. This helper always enqueues, including when called from the owning thread. WPF `Dispatcher.BeginInvoke` also adds work to the dispatcher event queue and returns immediately; running inline would change ordering, reentrancy, exception timing, and the meaning of the shutdown result.
 
-Use this `TryPost` shape only for work that is intentionally fire-and-forget and covered by the application's UI-thread exception policy. Check its `false` result during shutdown. Use a `HasThreadAccess` fast path only for invoke-and-observe behavior, not for posting.
-
-Prefer passing the queue or an application-owned UI scheduler abstraction to code that needs it. Avoid turning a queue into a global static merely to reproduce `Application.Current.Dispatcher`.
+Check whether `TryPost` returns `false` during shutdown. Use a `HasThreadAccess` fast path only for invoke-and-observe behavior, not for posting.
 
 ## Awaiting Enqueued Work
 
@@ -94,17 +92,12 @@ public static Task RunOnUiThreadAsync(
 
 This overload is only for synchronous `Action` callbacks. Do not pass an `async` lambda, which would become `async void` and make the returned task complete before the asynchronous work while losing exception propagation. Provide a separate `Func<Task>` overload that awaits the callback when dispatched work is asynchronous.
 
-Review cancellation and shutdown explicitly. A queue can reject work during teardown. If cancellation is required, define whether it may cancel only before enqueue, while waiting, or also suppress an already queued callback; do not add a token whose semantics the helper cannot honor.
-
-When the WPF call returned a value, use the same pattern with `Func<T>` and `TaskCompletionSource<T>`; do not emulate synchronous `Invoke` by blocking the worker or UI thread.
+When the WPF call returned a value, use the same pattern with `Func<T>` and `TaskCompletionSource<T>`.
 
 ## View Models and Services
 
 - UI-bound collection/property updates must occur on the owning UI thread unless the binding source explicitly supports another model.
-- Capture the queue when constructing the view model on the UI thread, inject a scheduler abstraction, or dispatch in the view layer.
 - Keep CPU-bound and I/O-bound work off the UI thread; dispatch only the minimal state update.
-- Do not use `Task.Run` as a mechanical replacement for `Task.Factory.StartNew` or synchronous WPF code. Preserve cancellation, long-running semantics, ordering, and exception observation.
-- Recheck timers: WPF `DispatcherTimer`, `System.Threading.Timer`, `PeriodicTimer`, and composition/UI timers have different ownership and suspension behavior.
 
 For an existing C++/WinRT component, replace `CoreDispatcher.RunAsync` with `DispatcherQueue.TryEnqueue`, and use WIL to resume a coroutine on a WinUI queue:
 
@@ -125,9 +118,9 @@ WinUI `Window` is not a `DependencyObject` or `FrameworkElement`.
 | WPF `Window` feature | WinUI migration |
 |---|---|
 | `Resources`, `DataContext`, visual states | Put them on a hosted `Page`, `UserControl`, or root `FrameworkElement`. |
-| `Application.Current.MainWindow` / `Window.Current` | Track one or more windows explicitly in the application/window service. |
-| `Width`, `Height`, `Left`, `Top`, `WindowState`, `ResizeMode` | Use `AppWindow`/presenter APIs or an already-approved helper library. |
-| `SizeToContent` | Measure content and size the `AppWindow`, or redesign the layout with an explicit/responsive size. |
+| `Application.Current.MainWindow` / `Window.Current` | Track window references explicitly. |
+| `Width`, `Height`, `Left`, `Top`, `WindowState`, `ResizeMode` | Use `AppWindow`/presenter APIs or an existing window helper. |
+| `SizeToContent` | Measure content and size the `AppWindow`. |
 | `WindowStartupLocation` | Position through `AppWindow` and `DisplayArea`, respecting monitor work areas and DPI. |
 | `Closing` / cancellation | Use the supported WinUI/`AppWindow` closing event and preserve hide-to-tray or cancellation behavior. |
 | `Loaded` / `Unloaded` | Attach these handlers to the hosted `FrameworkElement`, not the WinUI `Window`. |
@@ -162,7 +155,7 @@ public partial class App : Application
 }
 ```
 
-For multi-window applications, use a collection or window service, remove closed windows, and decide which window owns dialogs, pickers, commands, and process lifetime. Avoid a global `MainWindow` shortcut that silently targets the wrong window.
+For applications with multiple windows, use the correct owner for dialogs, pickers, and commands, and remove closed window references. Preserve which window controls process lifetime.
 
 ## Access AppWindow and HWND
 
@@ -177,8 +170,6 @@ IntPtr hwnd = WindowNative.GetWindowHandle(window);
 WindowId windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
 AppWindow appWindow = AppWindow.GetFromWindowId(windowId);
 ```
-
-Keep HWND/`WindowId` conversion at the platform boundary instead of spreading it through view models.
 
 ## Size and Position
 
@@ -231,7 +222,7 @@ appWindow.Move(new Windows.Graphics.PointInt32(x, y));
 
 ## Optional WinUIEx Window Base
 
-When the application already uses WinUIEx, or its window requirements have led the project to select that library, `WindowEx` exposes common window settings directly. Keep the native `Window`/`AppWindow` approach above when it fits the project; adopting WinUIEx does not require changing the deployment model.
+When using WinUIEx, `WindowEx` exposes common window settings directly.
 
 Change both the XAML root and its code-behind base class:
 
@@ -283,11 +274,11 @@ Keep `DataContext`, local resources, and visual states on the hosted view. `Wind
 
 For example, set `PersistenceId = "MainWindow";` before the first `Activate()` only when restoring placement is part of the application's behavior. Center the initial window before activation as above; do not center it again after saved placement is restored. The built-in restoration depends on the monitor layout remaining unchanged.
 
-Packaged applications can use WinUIEx's default `ApplicationData` storage. For an unpackaged application, initialize `WindowManager.PersistenceStorage` from application-owned persisted data before any participating window opens, and save the updated dictionary across sessions. Preserve existing settings contracts when adding this storage; do not change packaging to enable persistence.
+Packaged applications can use WinUIEx's default `ApplicationData` storage. For an unpackaged application, initialize `WindowManager.PersistenceStorage` from application-owned persisted data before any participating window opens, and save the updated dictionary across sessions.
 
 ## Title Bars and Presenters
 
-Keep standard chrome unless custom chrome is required. Map window-state commands to the overlapped presenter:
+Map window-state commands to the overlapped presenter:
 
 ```csharp
 if (appWindow.Presenter is OverlappedPresenter presenter)
@@ -305,7 +296,7 @@ window.ExtendsContentIntoTitleBar = true;
 window.SetTitleBar(appTitleBar);
 ```
 
-Preserve drag regions, caption buttons, system menu, keyboard behavior, snap layouts, High Contrast, and right-to-left layout. Use `AppWindowTitleBar.IsCustomizationSupported()` where required by the target SDK/OS support range. Set presenter resize/minimize/maximize restrictions separately.
+Preserve drag regions and caption-button behavior. Use `AppWindowTitleBar.IsCustomizationSupported()` where required by the target SDK/OS support range. Set presenter resize/minimize/maximize restrictions separately.
 
 ## ContentDialog Ownership
 
@@ -358,8 +349,6 @@ InitializeWithWindow.Initialize(picker, hwnd);
 StorageFile? file = await picker.PickSingleFileAsync();
 ```
 
-Do not cargo-cult the HWND initialization into the newer picker API, and do not omit ownership from the legacy API.
-
 ## Closing and Process Lifetime
 
 For a tray application whose close button hides the window, set `exitRequested` in its explicit Exit command:
@@ -373,11 +362,11 @@ appWindow.Closing += (_, args) =>
 };
 ```
 
-For an async save/discard prompt, cancel closing synchronously, prevent a second prompt while the first is pending, then request close again only after confirmation using a bypass flag. Preserve last-window/background lifetime and cleanup on failed activation. Do not let an `async void` handler close the window before the awaited prompt finishes.
+For an async save/discard prompt, cancel closing synchronously, prevent a second prompt while the first is pending, then request close again only after confirmation using a bypass flag. Preserve last-window/background lifetime. Do not let an `async void` handler close the window before the awaited prompt finishes.
 
 ## Custom Entry Points
 
-Keep the generated WinUI entry point unless the process genuinely needs work before XAML application startup, such as a dual CLI/GUI mode, custom app-instance redirection, or native initialization.
+Keep the generated WinUI entry point unless the process genuinely needs work before XAML application startup, such as a dual CLI/GUI mode or native initialization.
 
 If required, start from the installed target SDK's generated `Main` and retain its apartment/runtime initialization. Append the symbol without replacing existing constants:
 
@@ -398,7 +387,7 @@ Microsoft.UI.Xaml.Application.Start(p =>
 });
 ```
 
-Preserve any additional initialization in the target template. Route a recognized non-UI command before XAML startup, initializing any WinRT services that command needs; do not create a WPF `Application` to obtain a dispatcher. Keep GUI creation on its STA thread and avoid an awaited entry point that resumes GUI startup on a worker. Validate the application's deployment and activation paths; arbitrary arguments may be activation data, not a request for CLI mode.
+Preserve any additional initialization in the target template. Route a recognized non-UI command before XAML startup, initializing any WinRT services that command needs; do not create a WPF `Application` to obtain a dispatcher. Keep GUI creation on its STA thread and avoid an awaited entry point that resumes GUI startup on a worker. Arbitrary arguments may be activation data, not a request for CLI mode.
 
 ## Official References
 

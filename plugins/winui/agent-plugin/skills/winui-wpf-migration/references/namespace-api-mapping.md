@@ -44,62 +44,39 @@ Use this reference to classify a WPF dependency before changing it. A matching t
 
 Examples include `Button`, `TextBox`, `TextBlock`, `PasswordBox`, `ComboBox`, `CheckBox`, `RadioButton`, `ListBox`, `ListView`, `GridView`, `Image`, `StackPanel`, `Grid`, `Border`, `ScrollViewer`, `ContentControl`, `UserControl`, `Page`, `Frame`, `Slider`, `ProgressBar`, `ToolTip`, `ToggleButton`, `TreeView`, and `Expander`.
 
-Still compare:
+`ListBox` is available in WinUI 3; it is not deprecated.
 
-- Missing or renamed dependency properties.
-- Default styles and visual-state names.
-- Selection and virtualization behavior.
-- Routed events and event argument types.
-- Keyboard/focus and UI Automation behavior.
-- Binding defaults and template restrictions.
+## Controls With Different Names or Behavior
 
-`ListBox` is available in current WinUI 3; it is not categorically deprecated. Choose `ListBox`, `ListView`, `GridView`, `ItemsView`, or `ItemsRepeater` from the required interaction and layout rather than a blanket rule.
-
-## Controls Requiring a Design Decision
-
-Search current samples with `winui-design` before choosing a dependency or writing a custom control.
-
-| WPF surface | Candidate WinUI approach | Decide from |
+| WPF surface | WinUI replacement | Notes |
 |---|---|---|
-| `MessageBox` | `ContentDialog`, in-page confirmation, `AppNotification`, or a Win32 dialog | Owner, modality, process/window scope, accessibility. |
-| `ContextMenu` | `MenuFlyout` assigned through `ContextFlyout` | Command routing and target context. |
+| `MessageBox` | `ContentDialog` | Set `XamlRoot` before `ShowAsync()`. |
+| `ContextMenu` | `MenuFlyout` | Assign through `ContextFlyout`. |
 | `Menu` / `MenuItem` | `MenuBar`, `MenuBarItem`, `MenuFlyout` | Persistent application menu versus contextual actions. |
-| `ToolBar` / `ToolBarTray` | `CommandBar` and app bar buttons | Overflow, labels, keyboard accelerators, responsive layout. |
-| `StatusBar` | App-specific `Grid`/`StackPanel`, `InfoBar`, or inline status | Persistent status versus actionable notification. |
-| `TabControl` | `TabView`, top `NavigationView`, or a selector plus content | Close/reorder semantics, document tabs, navigation history. |
-| `DataGrid` | Evaluate [WinUI.TableView](https://github.com/w-ahmad/WinUI.TableView) or another grid; use `ListView`/`ItemsRepeater`/`ItemsView` composition for simpler tables | Editing, sorting, grouping, virtualization, clipboard, keyboard, automation, licensing. WinUI 3 has no first-party `DataGrid`. |
-| `WrapPanel` | Toolkit `WrapPanel`, `ItemsRepeater` with a suitable layout, or `GridView` | Variable item size, selection, virtualization, wrapping rules. |
-| `UniformGrid` | Toolkit `UniformGrid` for child elements or `UniformGridLayout` for item layout | Items versus arbitrary child elements, virtualization, fixed rows/columns. |
-| `DockPanel` | Toolkit `DockPanel` or `Grid` | Whether dock behavior is truly needed or a fixed grid is clearer. |
-| `GridSplitter` | Toolkit `GridSplitter` or app-specific pointer/keyboard behavior | Accessibility, min/max sizing, pane persistence. |
-| `GroupBox` | `Expander`, header + border, or Toolkit `HeaderedContentControl` | Collapsible behavior, semantics, keyboard navigation. |
-| `Ribbon` | `CommandBar`, `NavigationView`, or the experimental [Toolkit Labs Ribbon](https://github.com/CommunityToolkit/Labs-Windows/tree/main/components/Ribbon) | Feature completeness and accessibility. |
-| `RichTextBox` | `RichEditBox` | Document format, clipboard, spellcheck, printing. |
-| `FlowDocument` / `DocumentViewer` | `RichTextBlock`, `WebView2` for supported web/HTML/PDF content, a dedicated PDF/XPS/document component, or architectural redesign | Pagination, printing, annotations, and the actual document format. Do not assume WebView2 directly replaces XPS/document semantics. |
-| `WebBrowser` | `WebView2` | Initialization, profile/data folder, navigation security. |
-| `MediaElement` | `MediaPlayerElement` | Playback lifecycle and media transport controls. |
-| `Label` / `AccessText` | `TextBlock` or control header/content plus `AccessKey` | Label association, mnemonics, automation name. |
+| `ToolBar` / `ToolBarTray` | `CommandBar` + `AppBarButton` | No `ToolBarTray` counterpart. |
+| `StatusBar` | Custom `Grid`/`StackPanel` or `InfoBar` | No built-in `StatusBar`. |
+| `TabControl` | `TabView` or `NavigationView` in top mode | `TabView` supports closeable tabs. |
+| `DataGrid` | [WinUI.TableView](https://github.com/w-ahmad/WinUI.TableView) or an existing WinUI grid | No first-party `DataGrid`; the old Toolkit grid is archived. |
+| `WrapPanel` | Toolkit `WrapPanel` | See the package map below. |
+| `UniformGrid` | Toolkit `UniformGrid` | Lays out child elements in uniform rows/columns. |
+| `DockPanel` | Toolkit `DockPanel` | See the package map below. |
+| `GridSplitter` | Toolkit `GridSplitter` | See the package map below. |
+| `GroupBox` | `Expander` or Toolkit `HeaderedContentControl` | Use `HeaderedContentControl` when the group should not collapse. |
+| `Ribbon` | `CommandBar`, `NavigationView`, or [Toolkit Labs Ribbon](https://github.com/CommunityToolkit/Labs-Windows/tree/main/components/Ribbon) | No first-party Ribbon; the Labs component is experimental and partial. |
+| `RichTextBox` | `RichEditBox` | Rich-text editing with a different API. |
+| `FlowDocument` | `RichTextBlock` | Partial replacement; no WPF `FlowDocument` model. |
+| `DocumentViewer` | `WebView2` for supported HTML/PDF content | XPS requires a separate renderer; WebView2 does not render it directly. |
+| `WebBrowser` | `WebView2` | Different initialization API. |
+| `MediaElement` | `MediaPlayerElement` | Different playback API. |
+| `Label` / `AccessText` | `TextBlock` plus `AccessKey` on the target control | `TextBlock` is not a WPF `Label` content control. |
 | `Adorner` / `AdornerLayer` | Use the purpose-specific mapping below | Validation, resize handles, drag preview, overlay, or watermark. |
-
-Archived or legacy controls can be valid for compatibility, but confirm maintenance status, supported Windows App SDK versions, AOT/trimming behavior, and license before adding them.
-
-For a WPF `DataGrid`, inventory these behaviors before selecting or implementing a replacement:
-
-- Cell/row edit start, commit, cancel, and validation timing.
-- Explicit versus auto-generated columns, templates, formatting, and column persistence.
-- Sorting, grouping, filtering, selection units, current cell, and row details.
-- Clipboard copy/paste, delete, undo, keyboard navigation, focus, and accessibility patterns.
-- Virtualization, incremental loading, large-data performance, and horizontal scrolling.
-- Frozen columns, resizing/reordering, headers, context menus, and automation used by tests.
-
-A simple read-only table and a spreadsheet-like editor are different migration problems; do not choose the same replacement by control name alone.
 
 ### Adorners by purpose
 
 | WPF adorner use | WinUI migration |
 |---|---|
 | Validation indicator | `TeachingTip`, `InfoBar`, or validation visuals in the input control's template. |
-| Resize handles | A `Popup` or overlay aligned with the target; preserve pointer and keyboard resizing. |
+| Resize handles | A `Popup` positioned relative to the target. |
 | Drag preview | `DragStarting` exposes `DragUI` for the visual; `ListView`/`GridView` also expose `DragItemsStarting` for the item data payload. |
 | Overlay decoration | A `Canvas` overlay or `Popup` layer positioned relative to the target. |
 | Watermark / placeholder | `TextBox.PlaceholderText` when the requirement is an empty-field hint. |
@@ -118,8 +95,6 @@ A simple read-only table and a spreadsheet-like editor are different migration p
 | `PreviewKeyDown` / `PreviewKeyUp` | Same event names on WinUI `UIElement` | These tunneling key events exist; do not delete them based on a blanket “no preview events” rule. |
 | `KeyDown` / `KeyUp` | Same names with `KeyRoutedEventArgs` | Recheck accelerator, focus, and handled behavior. |
 
-Do not bulk rename handler methods without reviewing their event arguments and behavioral assumptions.
-
 ## Commands and Binding APIs
 
 | WPF | WinUI option |
@@ -127,7 +102,7 @@ Do not bulk rename handler methods without reviewing their event arguments and b
 | `RoutedUICommand` / `CommandBinding` | Bind a C# `System.Windows.Input.ICommand`, use an existing MVVM command, or use `StandardUICommand`/`XamlUICommand` where platform semantics fit. |
 | `ApplicationCommands.*` | Platform command, keyboard accelerator, or application-owned command. |
 | `IValueConverter` with `CultureInfo` | WinUI converter with `string language`; use the [converter decision guide](xaml-migration.md#value-converter-decision-guide) for visual states, built-in conversions, and Toolkit choices. |
-| `MultiBinding` | `x:Bind` function binding, a computed view-model property, or an application-owned aggregate object. |
+| `MultiBinding` | `x:Bind` function binding or a computed view-model property. |
 
 ## Platform API Replacements
 
@@ -138,25 +113,23 @@ Do not bulk rename handler methods without reviewing their event arguments and b
 | `Application.Current.Dispatcher` | Capture the dispatcher queue from the owning UI object/thread and pass it to code that needs it. |
 | `Window.Current` / `Application.Current.MainWindow` | Track application windows explicitly. |
 | `WindowInteropHelper` / `HwndSource` | `WinRT.Interop.WindowNative`, `WindowId`, `AppWindow`, or a specific HWND interop API. |
-| `System.Windows.Clipboard` | `Windows.ApplicationModel.DataTransfer.Clipboard` or another API chosen for the deployment context. |
+| `System.Windows.Clipboard` | `Windows.ApplicationModel.DataTransfer.Clipboard`. |
 | WPF file dialogs | Current Windows App SDK picker APIs or initialized legacy WinRT/Win32 pickers; see [Threading and Windowing](threading-and-windowing.md). |
-| `SystemParameters` / `SystemColors` | Theme/system resources, accessibility settings, `DisplayInformation`, or Win32 APIs depending on the value. |
+| `SystemParameters` / `SystemColors` | Theme/system resources, `DisplayInformation`, or Win32 APIs depending on the value. |
 | Pack URI | Package/application URI appropriate to the asset and deployment model; commonly `ms-appx:///` for packaged content. |
 
 ## Optional Package Migration
 
-Only add packages required by the selected design:
-
 | WPF package or feature | Candidate |
 |---|---|
 | `Microsoft.Xaml.Behaviors.Wpf` | `Microsoft.Xaml.Behaviors.WinUI.Managed`, if behaviors remain the chosen approach. |
-| WPF-UI/Lepo controls | Native WinUI controls, current Toolkit controls, or app styles selected per behavior. |
+| WPF-UI/Lepo controls | Native WinUI controls; see [XAML Migration](xaml-migration.md#wpf-ui-and-other-wpf-control-libraries). |
 | Custom observable/command base | Existing MVVM framework or CommunityToolkit.Mvvm if an MVVM migration is explicitly in scope. |
-| WPF Toolkit controls | Current Windows Community Toolkit packages or another maintained component after verification. |
+| `Microsoft.Toolkit.Wpf.*` | `CommunityToolkit.WinUI.*` packages listed below. |
 
 ### Toolkit controls and package names
 
-Use these candidates when the native controls do not provide the required behavior. The `Controls.*` package IDs differ from their shared XAML namespace:
+These optional `Controls.*` packages share a XAML namespace that differs from their package IDs:
 
 | WPF / UI requirement | Toolkit control | NuGet package | XAML namespace |
 |---|---|---|---|
@@ -169,7 +142,7 @@ Use these candidates when the native controls do not provide the required behavi
 
 `Primitives` also supplies `ConstrainedBox` and `SwitchPresenter`. For converters and ancestor binding, see [XAML Migration](xaml-migration.md#value-converter-decision-guide): `CommunityToolkit.WinUI.Converters` uses `using:CommunityToolkit.WinUI.Converters`, while `CommunityToolkit.WinUI.Extensions` exposes `FrameworkElementExtensions` through `using:CommunityToolkit.WinUI`.
 
-The legacy `CommunityToolkit.WinUI.UI.Controls.DataGrid` package is an archived option for existing grid code, not the current `Controls.*` family. Select packages and versions from the required behavior and target Windows App SDK; confirm package metadata and sample namespaces before adding references.
+The legacy `CommunityToolkit.WinUI.UI.Controls.DataGrid` package is an archived option for existing grid code, not the current `Controls.*` family. Use package versions compatible with the target Windows App SDK.
 
 ## Native WinRT Component References
 

@@ -10,28 +10,10 @@ WPF often uses `BitmapSource` for both UI display and pixel processing. WinUI mi
 |---|---|
 | Display an image in XAML | `Microsoft.UI.Xaml.Media.Imaging.BitmapImage` or `SoftwareBitmapSource` |
 | Decode, encode, transform, or inspect metadata | `Windows.Graphics.Imaging.BitmapDecoder`, `BitmapEncoder`, `BitmapTransform`, `SoftwareBitmap` |
-| Existing cross-platform/native image pipeline | Keep or adapt the existing library if it meets deployment, licensing, performance, and format requirements |
 
-`BitmapImage` is a UI source, not a replacement for WPF's processing pipeline. `System.Drawing` is also a separate technology; do not mechanically replace it with `BitmapImage`.
+`BitmapImage` is a UI source, not a replacement for WPF's processing pipeline.
 
 Replace `PresentationCore`/`System.Windows.Media.Imaging` dependencies in the converted project. Do not enable WPF in the WinUI application to make old imaging code compile.
-
-## Inventory Imaging Behavior
-
-Before changing types, record:
-
-- Supported input and output formats, including multi-frame images.
-- Resize/crop/rotate/orientation behavior and interpolation quality.
-- Alpha and pixel format assumptions.
-- Color management and ICC profile behavior.
-- Metadata preservation/removal policy.
-- JPEG quality, TIFF compression, PNG interlace, and other encoder options.
-- Memory/stream ownership and maximum image size.
-- Concurrency, cancellation, progress, and error reporting.
-- Persisted codec GUIDs, enum numeric values, or settings names.
-- Tests that expect byte-identical output versus semantically equivalent output.
-
-Choose the processing API only after this inventory. Windows.Graphics.Imaging is a strong Windows-native option, but it does not reproduce every WPF codec feature.
 
 ## Core Type Map
 
@@ -39,9 +21,9 @@ Choose the processing API only after this inventory. Windows.Graphics.Imaging is
 |---|---|---|
 | `BitmapDecoder.Create(...)` and format-specific decoders | `BitmapDecoder.CreateAsync(...)` | Unified async decoder; format is detected from the stream. |
 | `decoder.Frames[0]` | `await decoder.GetFrameAsync(0)` | Frame access is async. |
-| `decoder.Frames.Count` | `decoder.FrameCount` | WinRT decoder counts/dimensions commonly use unsigned values; check each projected API. |
+| `decoder.Frames.Count` | `decoder.FrameCount` | `int` → `uint`. |
 | `decoder.CodecInfo.ContainerFormat` | `decoder.DecoderInformation.CodecId` | A decoder ID is not a container GUID or an encoder ID; map explicitly. |
-| `BitmapSource` pixel data | `SoftwareBitmap` or an app-owned image abstraction | Do not expose a UI source type from processing interfaces. |
+| `BitmapSource` pixel data | `SoftwareBitmap` | Use the pixel-data type in processing interfaces. |
 | `BitmapImage` for display | `Microsoft.UI.Xaml.Media.Imaging.BitmapImage` | Similar name, different framework namespace/lifetime. |
 | `FormatConvertedBitmap` | `SoftwareBitmap.Convert(...)` or decoder pixel-format request | Validate alpha and color behavior. |
 | `TransformedBitmap` / `ScaleTransform` | `BitmapTransform` configured on decoder/encoder operations | WinRT often expresses transforms declaratively. |
@@ -61,18 +43,11 @@ using IRandomAccessStream randomAccess = input.AsRandomAccessStream();
 BitmapDecoder decoder = await BitmapDecoder.CreateAsync(randomAccess);
 ```
 
-Review ownership carefully:
-
-- Which wrapper disposes the underlying stream.
-- Whether an operation changes stream position.
-- Whether the same input stream is reused for transcoding or metadata reads.
-- Whether the source supports random access.
+Keep the underlying stream and its WinRT wrapper open through decoding/transcoding, and scope their disposal together.
 
 `BitmapEncoder` expects an empty output stream. If a destination may already contain data, set its `Size` to `0` and seek to the beginning before creating the encoder. Do not truncate the decoder's source stream before the source-dependent encoding operation has completed.
 
-For same-file replacement, follow the official SimpleImaging pattern: encode to a separate empty `InMemoryRandomAccessStream`; after `FlushAsync`, seek the temporary stream and destination to zero, set the destination's `Size` to `0`, and copy the encoded bytes. If the operation changes only a limited amount of metadata, evaluate `CreateForInPlacePropertyEncodingAsync` and its documented restrictions.
-
-Do not rely on a sample's seek behavior without testing the exact decode/encode flow.
+For same-file replacement, follow the official SimpleImaging pattern: encode to a separate empty `InMemoryRandomAccessStream`; after `FlushAsync`, seek the temporary stream and destination to zero, set the destination's `Size` to `0`, and copy the encoded bytes.
 
 ## Decode, Transform, and Encode
 
@@ -135,15 +110,10 @@ BitmapEncoder tiffEncoder = await BitmapEncoder.CreateAsync(
 
 `TiffCompressionMode.Lzw` is `4`; `2` means `Ccitt3`. Encoding options belong in `CreateAsync`/`GoToNextFrameAsync`, not the frame's metadata property set. Verify codec support with actual files.
 
-Codec-specific mappings and compatibility gaps to test include:
+Other codec differences:
 
 - PNG interlace: `InterlaceOption` uses `PropertyType.Boolean`; verify the encoded output with the target SDK/codec.
 - WMP/HDP/JPEG XR. Windows.Graphics.Imaging exposes JPEG XR decoder/encoder IDs; verify deployed codec behavior, metadata, and output compatibility rather than declaring the format unsupported.
-- Selective metadata removal.
-- Indexed and uncommon pixel formats.
-- Bit-exact scaler output.
-
-When an option is unsupported, define the product behavior: preserve via another library, degrade with an explicit warning, or reject the operation.
 
 ## Display a SoftwareBitmap
 
@@ -168,14 +138,6 @@ image.Source = source;
 
 Decide who owns and disposes the original and converted bitmaps. Avoid leaking one `SoftwareBitmap` per preview refresh.
 
-For URI/file display that needs no pixel processing, a `BitmapImage` may be simpler:
-
-```csharp
-var source = new BitmapImage();
-await source.SetSourceAsync(randomAccessStream);
-image.Source = source;
-```
-
 ## Async and Concurrency
 
 Change synchronous per-file methods to return `Task`, propagate async to callers, and keep a bounded concurrency limit:
@@ -191,7 +153,7 @@ await Parallel.ForEachAsync(files, options,
 ```
 
 - Limit parallelism by both CPU and expected decoded image size; a few large images can exhaust memory.
-- Observe all task exceptions and define partial-failure behavior.
+- Observe all task exceptions.
 - Do not use `.Result`/`.Wait()` on the UI thread.
 - Dispatch only UI progress/preview updates, not the decode itself.
 
@@ -227,7 +189,7 @@ for (uint i = 0; i < decoder.FrameCount; i++)
 
 ## Metadata and Orientation
 
-`CreateForTranscodingAsync` starts from the source decoder and is useful when preserving source information; `CreateAsync` starts a new encode path. Neither choice replaces a product-specific metadata policy.
+`CreateForTranscodingAsync` starts from the source decoder and is useful when preserving source information; `CreateAsync` starts a new encode path.
 
 Validate at least:
 
@@ -260,21 +222,11 @@ if (!decoderToEncoder.TryGetValue(decoder.DecoderInformation.CodecId, out Guid e
     throw new NotSupportedException("No output encoder is configured for this format.");
 ```
 
-Use the same checked lookup for a persisted container GUID. Do not pass a decoder ID or `Guid.Empty` to `CreateAsync`. Preserve unknown serialized values when the existing contract does so, even if the operation rejects them.
+Use the same checked lookup for a persisted container GUID. Do not pass a decoder ID or `Guid.Empty` to `CreateAsync`.
 
 If settings serialized WPF enum values, retain their names/numbers in an application-owned enum, for example `enum LegacyPngInterlace { Default = 0, On = 1, Off = 2 }`. Test deserialization with settings from supported released versions before removing the WPF enum reference.
 
 ## Testing
-
-Use representative fixtures for:
-
-- Every supported format and encoder option.
-- Tiny, large, transparent, indexed, high-bit-depth, and malformed images.
-- EXIF orientation and color profiles.
-- Multi-frame input.
-- Metadata keep/remove policies.
-- Cancellation, locked files, non-seekable streams, and partial output.
-- Peak memory and bounded parallelism.
 
 Compare the correct invariant. Dimensions, visible pixels within tolerance, metadata, and user-visible behavior are often more meaningful than byte equality across different codec implementations.
 
@@ -309,6 +261,5 @@ If existing tests use unsafe pointers through `IMemoryBufferByteAccess`, enable 
 - [`BitmapEncoder.CreateAsync`](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.bitmapencoder.createasync)
 - [`BitmapEncoder.CreateForTranscodingAsync`](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.bitmapencoder.createfortranscodingasync)
 - [Create, edit, and save bitmap images](https://learn.microsoft.com/windows/apps/develop/media-authoring-processing/imaging)
-- [`BitmapEncoder.CreateForInPlacePropertyEncodingAsync`](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.bitmapencoder.createforinplacepropertyencodingasync)
 - [`GoToNextFrameAsync`](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.bitmapencoder.gotonextframeasync), [encoding options](https://learn.microsoft.com/windows/win32/wic/-wic-creating-encoder), and [`TiffCompressionMode`](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.tiffcompressionmode)
 - [`SoftwareBitmap` constructors](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.softwarebitmap.-ctor) and [bitmap property queries](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.bitmapproperties.getpropertiesasync)
