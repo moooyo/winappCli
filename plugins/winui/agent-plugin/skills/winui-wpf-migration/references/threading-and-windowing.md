@@ -111,32 +111,92 @@ co_await wil::resume_foreground(dispatcherQueue);
 
 Use the project's `Microsoft.Windows.ImplementationLibrary` dependency/version for WIL. This replaces `winrt::resume_foreground(CoreDispatcher)`; C# code does not need this dependency.
 
+## Choose the UI Surface
+
+Choose the surface according to its role in the application:
+
+| UI role | WinUI surface |
+|---|---|
+| An in-app confirmation, prompt, or dialog | `ContentDialog` attached to the owning content's `XamlRoot`. |
+| A child page or navigation destination | A `Page` hosted by a `Frame` in the current window. |
+| An independent top-level interface | A window with its own lifetime, activation, and ownership. |
+
+Use a separate window when the interface needs that independent top-level behavior. Keep dialogs and child pages within their owning window.
+
+## Prefer WindowEx for Top-Level Windows
+
+For top-level windows, default to `WinUIEx.WindowEx` or the project's existing `WindowEx`-derived base. Declare the window properties exposed by that base in XAML. Use `AppWindow`/presenter APIs for behavior the base does not expose, imperative window commands, or HWND interop.
+
+Reference WinUIEx according to the project's package and version policy. Change both the XAML root and its code-behind base class:
+
+```xml
+<winuiex:WindowEx
+    x:Class="MyApp.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:views="using:MyApp.Views"
+    xmlns:winuiex="using:WinUIEx"
+    Title="My App"
+    MinWidth="480"
+    MinHeight="320"
+    IsResizable="True"
+    IsMinimizable="True"
+    IsMaximizable="True"
+    IsAlwaysOnTop="False"
+    IsTitleBarVisible="True">
+    <views:MainPage />
+</winuiex:WindowEx>
+```
+
+```csharp
+using WinUIEx;
+
+namespace MyApp;
+
+public sealed partial class MainWindow : WindowEx
+{
+    public MainWindow()
+    {
+        InitializeComponent();
+        this.CenterOnScreen(width: 800, height: 600);
+    }
+}
+```
+
+Keep `DataContext`, local resources, and visual states on the hosted view. `WindowEx` remains a `Window`, not a `FrameworkElement`.
+
+| WPF requirement | WinUIEx option |
+|---|---|
+| Window size and minimum/maximum bounds | `Width`/`Height`, `MinWidth`/`MinHeight`, `MaxWidth`/`MaxHeight`, in device-independent pixels (DIPs). |
+| `ResizeMode` and caption-button restrictions | Set `IsResizable`, `IsMinimizable`, and `IsMaximizable` separately to preserve the intended behavior. |
+| `Topmost` | `IsAlwaysOnTop`. |
+| `WindowState` | `WindowState` (`Normal`, `Minimized`, `Maximized`). |
+| Taskbar and Alt-Tab visibility | `IsShownInSwitchers`; verify both behaviors when replacing `ShowInTaskbar`. |
+| Standard title-bar visibility | `IsTitleBarVisible`; custom chrome still needs its drag regions and caption behavior. |
+| Center on the current monitor | `CenterOnScreen()`; optional width/height arguments use DIPs, unlike the physical pixels accepted by `AppWindow`. |
+| Restore window placement across sessions | A stable `PersistenceId`, set before first activation, with persistence storage appropriate to the deployment model. |
+
+For example, set `PersistenceId = "MainWindow";` before the first `Activate()` only when restoring placement is part of the application's behavior. Center the initial window before activation as above; do not center it again after saved placement is restored. The built-in restoration depends on the monitor layout remaining unchanged.
+
+Packaged applications can use WinUIEx's default `ApplicationData` storage. For an unpackaged application, initialize `WindowManager.PersistenceStorage` from application-owned persisted data before any participating window opens, and save the updated dictionary across sessions.
+
 ## WinUI Window Model
 
-WinUI `Window` is not a `DependencyObject` or `FrameworkElement`.
+`WindowEx` inherits WinUI `Window`, which is not a `DependencyObject` or `FrameworkElement`.
 
 | WPF `Window` feature | WinUI migration |
 |---|---|
 | `Resources`, `DataContext`, visual states | Put them on a hosted `Page`, `UserControl`, or root `FrameworkElement`. |
 | `Application.Current.MainWindow` / `Window.Current` | Track window references explicitly. |
-| `Width`, `Height`, `Left`, `Top`, `WindowState`, `ResizeMode` | Use `AppWindow`/presenter APIs or an existing window helper. |
+| `Width`, `Height`, `WindowState`, `ResizeMode` | Prefer the exposed `WindowEx` XAML properties above; preserve resize/minimize/maximize settings separately. |
+| `Left`, `Top` | Position the `AppWindow` with `Move`. |
 | `SizeToContent` | Measure content and size the `AppWindow`. |
-| `WindowStartupLocation` | Position through `AppWindow` and `DisplayArea`, respecting monitor work areas and DPI. |
+| `WindowStartupLocation` | Use `CenterOnScreen()` for centering; use `AppWindow` and `DisplayArea` for other placement, respecting monitor work areas and DPI. |
 | `Closing` / cancellation | Use the supported WinUI/`AppWindow` closing event and preserve hide-to-tray or cancellation behavior. |
 | `Loaded` / `Unloaded` | Attach these handlers to the hosted `FrameworkElement`, not the WinUI `Window`. |
-| `Icon` / `ShowInTaskbar` | Use `AppWindow.SetIcon(path)` / `AppWindow.IsShownInSwitchers`; the latter also affects Alt-Tab. |
-
-A useful structure is a thin top-level window that hosts the actual view:
-
-```xml
-<Window
-    x:Class="MyApp.MainWindow"
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:views="using:MyApp.Views">
-    <views:MainPage />
-</Window>
-```
+| `Title` | Set the inherited `Title` in `WindowEx` XAML, or use `Window.Title` / `AppWindow.Title`. |
+| `Icon` | Use `AppWindow.SetIcon(path)` with the deployed icon file. |
+| `ShowInTaskbar` | Set `WindowEx.IsShownInSwitchers` in XAML; it also affects Alt-Tab, so verify both behaviors. |
 
 ## Track Windows Explicitly
 
@@ -220,63 +280,19 @@ int y = display.WorkArea.Y +
 appWindow.Move(new Windows.Graphics.PointInt32(x, y));
 ```
 
-## Optional WinUIEx Window Base
+## Title Bars and Presenters
 
-When using WinUIEx, `WindowEx` exposes common window settings directly.
+Set the window caption through `Window.Title` or `AppWindow.Title`; `WindowEx` also exposes the inherited `Title` in XAML.
 
-Change both the XAML root and its code-behind base class:
+On Windows App SDK 1.3 and later, use `Window.SystemBackdrop` when the intended design calls for a system material. For example, this child of the `WindowEx` XAML root applies Mica:
 
 ```xml
-<winuiex:WindowEx
-    x:Class="MyApp.MainWindow"
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:views="using:MyApp.Views"
-    xmlns:winuiex="using:WinUIEx"
-    MinWidth="480"
-    MinHeight="320"
-    IsResizable="True"
-    IsMinimizable="True"
-    IsMaximizable="True"
-    IsAlwaysOnTop="False"
-    IsTitleBarVisible="True">
-    <views:MainPage />
-</winuiex:WindowEx>
+<Window.SystemBackdrop>
+    <MicaBackdrop />
+</Window.SystemBackdrop>
 ```
 
-```csharp
-using WinUIEx;
-
-namespace MyApp;
-
-public sealed partial class MainWindow : WindowEx
-{
-    public MainWindow()
-    {
-        InitializeComponent();
-        this.CenterOnScreen(width: 800, height: 600);
-    }
-}
-```
-
-Keep `DataContext`, local resources, and visual states on the hosted view. `WindowEx` remains a `Window`, not a `FrameworkElement`.
-
-| WPF requirement | WinUIEx option |
-|---|---|
-| Window size and minimum/maximum bounds | `Width`/`Height`, `MinWidth`/`MinHeight`, `MaxWidth`/`MaxHeight`, in device-independent pixels (DIPs). |
-| `ResizeMode` and caption-button restrictions | Set `IsResizable`, `IsMinimizable`, and `IsMaximizable` separately to preserve the intended behavior. |
-| `Topmost` | `IsAlwaysOnTop`. |
-| `WindowState` | `WindowState` (`Normal`, `Minimized`, `Maximized`). |
-| Taskbar and Alt-Tab visibility | `IsShownInSwitchers`; verify both behaviors when replacing `ShowInTaskbar`. |
-| Standard title-bar visibility | `IsTitleBarVisible`; custom chrome still needs its drag regions and caption behavior. |
-| Center on the current monitor | `CenterOnScreen()`; optional width/height arguments use DIPs, unlike the physical pixels accepted by `AppWindow`. |
-| Restore window placement across sessions | A stable `PersistenceId`, set before first activation, with persistence storage appropriate to the deployment model. |
-
-For example, set `PersistenceId = "MainWindow";` before the first `Activate()` only when restoring placement is part of the application's behavior. Center the initial window before activation as above; do not center it again after saved placement is restored. The built-in restoration depends on the monitor layout remaining unchanged.
-
-Packaged applications can use WinUIEx's default `ApplicationData` storage. For an unpackaged application, initialize `WindowManager.PersistenceStorage` from application-owned persisted data before any participating window opens, and save the updated dictionary across sessions.
-
-## Title Bars and Presenters
+`MicaBackdrop` falls back to a solid color where Mica is unsupported. Verify the material and fallback against the existing design and the target SDK/OS range.
 
 Map window-state commands to the overlapped presenter:
 
@@ -296,7 +312,19 @@ window.ExtendsContentIntoTitleBar = true;
 window.SetTitleBar(appTitleBar);
 ```
 
-Preserve drag regions and caption-button behavior. Use `AppWindowTitleBar.IsCustomizationSupported()` where required by the target SDK/OS support range. Set presenter resize/minimize/maximize restrictions separately.
+On Windows App SDK 1.4 and later, the XAML window and `AppWindow` share the title-bar object. When the intended custom title bar needs transparent caption-button backgrounds, apply the native settings alongside the XAML setup above:
+
+```csharp
+if (AppWindowTitleBar.IsCustomizationSupported())
+{
+    AppWindowTitleBar titleBar = appWindow.TitleBar;
+    titleBar.ExtendsContentIntoTitleBar = true;
+    titleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
+    titleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+}
+```
+
+Transparent caption-button backgrounds require content extended into the title bar. Preserve drag regions, caption-button contrast, and active/inactive states. For older targets, follow the title-bar APIs supported by that SDK/OS combination. Set presenter resize/minimize/maximize restrictions separately.
 
 ## ContentDialog Ownership
 
@@ -402,3 +430,4 @@ Preserve any additional initialization in the target template. Route a recognize
 - [WinUIEx `PersistenceId`](https://dotmorten.github.io/WinUIEx/api/WinUIEx.WindowManager.PersistenceId.html) and [`PersistenceStorage`](https://dotmorten.github.io/WinUIEx/api/WinUIEx.WindowManager.PersistenceStorage.html)
 - [WIL coroutine helpers](https://github.com/microsoft/wil/blob/master/include/wil/cppwinrt_helpers.h)
 - [`AppWindow.ResizeClient`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.windowing.appwindow.resizeclient), [`IsShownInSwitchers`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.windowing.appwindow.isshowninswitchers), and [`Closing`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.windowing.appwindow.closing)
+- [Title bar customization](https://learn.microsoft.com/windows/apps/develop/title-bar) and [`MicaBackdrop`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.media.micabackdrop)

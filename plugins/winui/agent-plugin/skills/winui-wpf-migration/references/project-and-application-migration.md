@@ -46,7 +46,7 @@ Do not add this item group when the target SDK already classifies the default `A
 | Old helpers and manifests | Remove unused observable/command helpers, WPF converters, and replaced manifests after checking all configurations. |
 
 Preserve assembly names, root namespaces, and internal visibility used by tests, native callers, or serialization.
-An existing assembly attribute can remain, or follow the repository's project-item convention:
+Move existing `InternalsVisibleTo` assembly attributes into `.csproj` items during migration, preserving each friend assembly's exact name and any public key:
 
 ```xml
 <ItemGroup>
@@ -54,7 +54,7 @@ An existing assembly attribute can remain, or follow the repository's project-it
 </ItemGroup>
 ```
 
-If moving the attribute into the project, remove the old declaration to avoid duplication.
+Remove the old attributes and duplicate project items after moving them; preserve any configuration conditions on the declarations.
 Before completing the app conversion, check for remaining `PresentationCore`, `PresentationFramework`, `WindowsBase`, `Microsoft.WindowsDesktop.App.WPF`, and WPF-only packages.
 
 ## Shared Logic and Application Startup
@@ -83,22 +83,25 @@ Do not overwrite the generated WinUI `App.xaml` or `App.xaml.cs`. Merge the old 
 
 Merge application resource dictionaries after the template's platform resources; see [XAML Migration](xaml-migration.md).
 
+Obtain application services through dependency injection (DI) in views and view models: inject them or resolve them from the application's configured service provider instead of constructing them with `new`.
+Service registration and explicit construction belong in the composition root (the startup code that assembles the application), preserving service lifetimes and cleanup.
+
 ## MVVM Migration
 
-WinUI does not require a new MVVM framework. Keep the current framework unless replacing it is part of the task.
-When replacing custom `Observable` / `RelayCommand` infrastructure with CommunityToolkit.Mvvm, preserve behavior as well as public property and command names.
+Migrate custom `Observable` / `RelayCommand` infrastructure to CommunityToolkit.Mvvm source generators by default.
+Preserve behavior as well as public property and command names.
 
 | Existing implementation | Toolkit migration |
 |---|---|
 | Custom observable base | Derive from `ObservableObject`; make generated types `partial`. |
-| Plain field-backed property | Use `[ObservableProperty]` with the syntax supported by the selected compiler and Toolkit version. |
+| Plain field-backed property | Use a public partial property with `[ObservableProperty]`. |
 | Stored default value | Keep it in the generated property's initializer. |
 | Dependent computed property | Add `[NotifyPropertyChangedFor]` to **each** input that changes its result. |
 | Command enablement | Preserve `CanExecute` and its invalidation, including `[NotifyCanExecuteChangedFor]` where appropriate. |
 | Custom setter logic | Preserve normalization, validation, side effects, and notification order; do not replace it with a plain generated property. |
 | Custom command | Use `[RelayCommand]` only after preserving arguments, cancellation, exception handling, and the generated command's name. |
 
-When the toolchain supports partial-property generation:
+Use partial properties for generated observable state:
 
 ```csharp
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -146,20 +149,23 @@ public partial class FileViewModel : ObservableObject
 
 Keep the old transformation and null/error behavior; `Trim` only illustrates the pattern.
 
-Check the actual compiler, language version, and Toolkit version before adopting partial properties.
-Field-based `[ObservableProperty]` can produce the WinRT/AOT warning `MVVMTK0045`; warning-as-error policy determines whether it fails the build.
+Use a compiler, language version, and Toolkit version that support partial-property generation within the application's supported toolchain.
+If the target toolchain cannot support it, use equivalent hand-written properties instead of field-based generation.
+`MVVMTK0045` warns that field-based `[ObservableProperty]` is not compatible with WinRT AOT; warning-as-error policy determines whether it fails the build.
 
 For binding source, lifetime, and update behavior, see [XAML Migration](xaml-migration.md).
 
 ## Localization and Resource Access
 
-For UI strings moving from generated WPF resources to WinUI localization:
+Migrate the application's own `.resx` resource sets to `.resw` by default, including strings read only from code:
+
+Move non-string resources such as icons and images to the corresponding WinUI asset/content items and update their callers; do not treat serialized resource objects as localized strings.
 
 1. Put localized `.resw` files in the project's language folders, such as `Strings/en-US/Resources.resw`.
 2. Verify the resource build items, resource map, and generated PRI file.
 3. Convert localized XAML properties to `x:Uid` and property-suffixed keys.
 4. Replace code calls to the migrated `Properties.Resources` accessor.
-5. Remove its obsolete designer/generator only after migrating the callers and localization tooling.
+5. Remove each migrated `.resx` file and its obsolete designer/generator after moving all callers and updating localization tooling.
 
 ```xml
 <Button x:Uid="SaveButton" />
@@ -177,7 +183,7 @@ Corresponding `.resw` entries name the target properties:
 ```
 
 Preserve stable identifiers or update every consumer of a renamed key.
-Keep non-XAML `.resx` resources where shared code still uses their generated API; not every resource must become `.resw`.
+Shared libraries outside this migration retain their `.resx` resources and generated accessors.
 
 ### Named PRI Files and Deferred Lookup
 
@@ -189,7 +195,7 @@ If the application uses a custom PRI filename, keep the build property, deployed
 </PropertyGroup>
 ```
 
-Reuse the application's resource accessor. A small accessor can defer creation until the resource environment is ready:
+Use a `ResourceLoader` accessor for the migrated resource sets, updating an existing application accessor where available. A small accessor can defer creation until the resource environment is ready:
 
 ```csharp
 using System;

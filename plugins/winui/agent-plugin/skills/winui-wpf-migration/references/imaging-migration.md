@@ -73,7 +73,16 @@ await encoder.FlushAsync();
 
 Before calling `SetSoftwareBitmap`, request or convert to a pixel format accepted by the encoder path (commonly `Bgra8`, `Rgba8`, or `Rgba16` as supported). Keep that bitmap alive until its frame is committed, then dispose it. Do not pass an arbitrary decoded gray/indexed format with a mismatched alpha mode.
 
-Map WPF `HighQuality`/`Fant` scaling to `BitmapInterpolationMode.Fant`; `Linear` and `NearestNeighbor` have matching modes. Preserve the chosen quality for default/low-quality settings and compare resized pixels within tolerance.
+Preserve the scaling choice with these mappings:
+
+| WPF `BitmapScalingMode` | WinRT `BitmapInterpolationMode` |
+|---|---|
+| `HighQuality` / `Fant` | `Fant` |
+| `Linear` | `Linear` |
+| `NearestNeighbor` | `NearestNeighbor` |
+| `Unspecified` / `LowQuality` | `Linear` |
+
+The last row follows WPF's default low-quality scaling. Preserve any explicit quality override in the application and compare resized pixels within tolerance.
 
 ## Encoder Options
 
@@ -157,6 +166,32 @@ await Parallel.ForEachAsync(files, options,
 - Do not use `.Result`/`.Wait()` on the UI thread.
 - Dispatch only UI progress/preview updates, not the decode itself.
 
+### Task.Factory.StartNew to Task.Run
+
+When background work becomes asynchronous, `Task.Factory.StartNew` with a `Func<Task>` returns a nested `Task<Task>`. For work that should run on the thread pool, `Task.Run` unwraps the async delegate so awaiting its result observes the entire operation:
+
+```csharp
+await Task.Run(
+    () => ResizeFilesAsync(files, cancellationToken),
+    cancellationToken);
+```
+
+The token passed to `Task.Run` can prevent work from starting; pass it to the operation too so running work can cooperate with cancellation. `Task.Run` uses the default scheduler and does not retain `StartNew`'s custom scheduler or `LongRunning` option. Preserve any required thread, apartment, or scheduling behavior explicitly. Await I/O-bound async work directly when no thread-pool scheduling is needed.
+
+### CLI Async Bridge
+
+If a synchronous entry point must remain, bridge async processing only in its recognized non-UI CLI branch, before XAML startup:
+
+```csharp
+// Inside the existing synchronous Main, after parsing the command:
+if (isCliMode)
+    return RunCliAsync(cliOptions, cancellationToken).GetAwaiter().GetResult();
+
+// Continue the GUI branch on the same [STAThread] entry thread.
+```
+
+Initialize any WinRT services needed by the CLI branch first. The CLI operation must not require UI work or a synchronization context that needs the blocked thread. Never use this bridge on the running GUI thread. Keep the GUI initialization order and STA thread described in [Custom Entry Points](threading-and-windowing.md#custom-entry-points); do not await before continuing into GUI startup.
+
 ## Multi-Frame Images
 
 For a fresh multi-page TIFF encoder, commit each frame before disposing its bitmap. Keep both streams open and start with an empty output stream. Select `orientationMode` and `colorManagementMode` from the application's existing behavior; calculate each frame's target dimensions using its existing aspect-ratio/crop policy.
@@ -205,13 +240,16 @@ Use property queries supported by the selected codec. Treat unsupported or rejec
 
 WPF codec container GUIDs or enum values may be stored in settings or exposed through IPC/CLI contracts. Removing the WPF type must not corrupt those contracts.
 
-Keep persisted IDs unchanged and map only values found in the application's released settings. For example, WPF JPEG/PNG container GUIDs and WinRT decoder IDs need separate lookup tables:
+Keep persisted IDs unchanged and map the formats found in the application's supported released settings. WPF container GUIDs and WinRT decoder IDs need separate lookup tables. These container mappings cover JPEG, PNG, BMP, TIFF, and GIF; the decoder example shows JPEG and PNG:
 
 ```csharp
 var legacyToEncoder = new Dictionary<Guid, Guid>
 {
     [new("19e4a5aa-5662-4fc5-a0c0-1758028e1057")] = BitmapEncoder.JpegEncoderId,
     [new("1b7cfaf4-713f-473c-bbcd-6137425faeaf")] = BitmapEncoder.PngEncoderId,
+    [new("0af1d87e-fcfe-4188-bdeb-a7906471cbe3")] = BitmapEncoder.BmpEncoderId,
+    [new("163bcc30-e2e9-4f0b-961d-a3e9fdb788a3")] = BitmapEncoder.TiffEncoderId,
+    [new("1f8a5601-7d4d-4cbd-9c82-1bc8d4eeb9a5")] = BitmapEncoder.GifEncoderId,
 };
 var decoderToEncoder = new Dictionary<Guid, Guid>
 {
@@ -224,7 +262,24 @@ if (!decoderToEncoder.TryGetValue(decoder.DecoderInformation.CodecId, out Guid e
 
 Use the same checked lookup for a persisted container GUID. Do not pass a decoder ID or `Guid.Empty` to `CreateAsync`.
 
-If settings serialized WPF enum values, retain their names/numbers in an application-owned enum, for example `enum LegacyPngInterlace { Default = 0, On = 1, Off = 2 }`. Test deserialization with settings from supported released versions before removing the WPF enum reference.
+If settings serialized WPF enum values, retain their member names and numbers in application-owned enums:
+
+```csharp
+public enum LegacyPngInterlace { Default = 0, On = 1, Off = 2 }
+
+public enum LegacyTiffCompression
+{
+    Default = 0,
+    None = 1,
+    Ccitt3 = 2,
+    Ccitt4 = 3,
+    Lzw = 4,
+    Rle = 5,
+    Zip = 6,
+}
+```
+
+Keep the legacy `Default` name in serialized settings even though the corresponding WinRT compression enum calls value `0` `Automatic`. Test deserialization with settings from supported released versions before removing the WPF enum reference.
 
 ## Testing
 
@@ -263,3 +318,5 @@ If existing tests use unsafe pointers through `IMemoryBufferByteAccess`, enable 
 - [Create, edit, and save bitmap images](https://learn.microsoft.com/windows/apps/develop/media-authoring-processing/imaging)
 - [`GoToNextFrameAsync`](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.bitmapencoder.gotonextframeasync), [encoding options](https://learn.microsoft.com/windows/win32/wic/-wic-creating-encoder), and [`TiffCompressionMode`](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.tiffcompressionmode)
 - [`SoftwareBitmap` constructors](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.softwarebitmap.-ctor) and [bitmap property queries](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.bitmapproperties.getpropertiesasync)
+- [WPF `BitmapScalingMode`](https://learn.microsoft.com/dotnet/api/system.windows.media.bitmapscalingmode) and [`TiffCompressOption`](https://learn.microsoft.com/dotnet/api/system.windows.media.imaging.tiffcompressoption)
+- [`Task.Run` overloads and cancellation](https://learn.microsoft.com/dotnet/api/system.threading.tasks.task.run) and [unwrapping nested tasks](https://learn.microsoft.com/dotnet/standard/parallel-programming/how-to-unwrap-a-nested-task)

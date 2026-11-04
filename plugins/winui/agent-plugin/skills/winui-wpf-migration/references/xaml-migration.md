@@ -15,13 +15,14 @@ Typical namespace change:
     xmlns:local="clr-namespace:MyApp"
     xmlns:models="clr-namespace:MyApp.Models;assembly=MyApp.Core">
 
-<!-- WinUI 3 -->
-<Window
+<!-- WinUI 3: WindowEx for a top-level window -->
+<winuiex:WindowEx
     x:Class="MyApp.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:MyApp"
-    xmlns:models="using:MyApp.Models">
+    xmlns:models="using:MyApp.Models"
+    xmlns:winuiex="using:WinUIEx">
 ```
 
 Use `using:` for application CLR namespaces. Remove WPF-only library namespaces only after replacing their elements, markup extensions, and styles.
@@ -43,6 +44,7 @@ Replace WPF resource declarations that use `xmlns:sys="clr-namespace:System;asse
 | `{x:Static ...}` | `x:Uid` for localized properties, `x:Bind`/function binding for accessible members, or code/resource lookup. |
 | `{x:Type ...}` | `x:DataType` on typed templates, or an application-owned type reference in code. |
 | `{x:Array}` | Create or expose the collection from code/view model. |
+| `<x:Code>` | Not supported; move inline code to the XAML class's code-behind file. |
 | `MultiBinding` | `x:Bind` function or computed view-model property. |
 | `Style.Triggers` / `DataTrigger` | `VisualStateManager` with `StateTrigger` for data-driven states, or the control's visual states for control-state triggers. |
 | WPF `EventTrigger` actions | Visual-state transitions, behaviors that support WinUI, or explicit event/command handling. |
@@ -105,7 +107,7 @@ WPF often binds generated `.resx` properties:
 <Button Content="{x:Static properties:Resources.Save}" />
 ```
 
-WinUI XAML localization commonly uses `x:Uid` and `.resw` keys that name the target property:
+Migrate the application's localized `.resx` strings to `.resw`. In XAML, use `x:Uid` and keys that name the target property:
 
 ```xml
 <Button x:Uid="SaveButton" />
@@ -120,7 +122,7 @@ WinUI XAML localization commonly uses `x:Uid` and `.resw` keys that name the tar
 </data>
 ```
 
-Keep managed `.resx` resources where still needed. XAML `.resw` keys name target properties, so renaming the file alone is insufficient.
+Keep `.resx` resources owned by shared libraries outside the application migration. XAML `.resw` keys name target properties, so renaming the file alone is insufficient.
 
 ## Typed Templates
 
@@ -146,7 +148,7 @@ For a reusable WinUI template, give it an `x:Key` and assign it to `ItemTemplate
 
 ## Binding Strategy
 
-Both classic `{Binding}` and `{x:Bind}` are valid in WinUI 3.
+Prefer `{x:Bind}` for new and migrated code for compile-time validation and generated bindings. Use classic `{Binding}` when the view must resolve its source through a runtime `DataContext`, or a reusable template cannot expose a typed source to compiled binding. Both are valid in WinUI 3.
 
 | Feature | `{Binding}` | `{x:Bind}` |
 |---|---|---|
@@ -155,7 +157,7 @@ Both classic `{Binding}` and `{x:Bind}` are valid in WinUI 3.
 | Resolution | Runtime | Generated/compiled code |
 | Function binding | No | Yes |
 
-Inside a `DataTemplate`, `x:Bind` uses the item type declared by `x:DataType`; inside a `ControlTemplate`, it uses the templated parent declared by `TargetType`.
+An empty `{Binding}` path binds to the whole `DataContext`. Pathless `{x:Bind}` is also valid, but uses its own default source from the table above; the two expressions are not interchangeable.
 
 WPF bindings with an omitted `Mode` can be two-way through the target property's metadata, as with `TextBox.Text` and `ToggleButton.IsChecked`. WinUI `{Binding}` defaults to `OneWay`; set `Mode=TwoWay` wherever edits must update the source.
 
@@ -190,14 +192,15 @@ Compiled binding can convert `bool` to `Visibility` in supported scenarios:
 
 ### Value Converter Decision Guide
 
-Use the first matching option. Reuse the project's converters where they already express the required behavior.
+Use the first matching option instead of porting WPF converters one-for-one.
 
 | Conversion need | WinUI migration |
 |---|---|
 | Selected, pointer-over, pressed, or disabled state inside a `ControlTemplate` | Use the control's visual states and setters; keep the inactive value on the element instead of converting a state property. |
 | `bool` → `Visibility` with `x:Bind` property binding | Bind the Boolean directly as above. This compiler conversion does not apply to classic `Binding` or function binding. |
-| `bool` → `Visibility` with classic `Binding` | A shared `CommunityToolkit.WinUI.Converters.BoolToVisibilityConverter`, when Toolkit converters are selected. |
+| `bool` → `Visibility` with classic `Binding` | Use a shared `CommunityToolkit.WinUI.Converters.BoolToVisibilityConverter`. |
 | Numeric value or collection count → `Visibility` | `DoubleToVisibilityConverter` with `GreaterThan` / `LessThan`; for nonempty collections use `GreaterThan="0"`. |
+| Formatted text with classic `Binding` | Use Toolkit's [`StringFormatConverter`](https://learn.microsoft.com/dotnet/api/communitytoolkit.winui.converters.stringformatconverter). |
 | Inverse of a Toolkit Boolean or numeric conversion | Reuse the converter with `ConverterParameter=True`. The `BoolToObjectConverter` and `DoubleToObjectConverter` families support this; it is not a convention for every converter. |
 | Framework `CornerRadius` → `Rectangle.RadiusX` / `RadiusY` | Check the target SDK's `XamlControlsResources` for `TopLeftCornerRadiusDoubleValueConverter` and `BottomRightCornerRadiusDoubleValueConverter`; preserve available resources instead of reimplementing them. |
 | App-specific conversion without an existing equivalent | Implement WinUI `IValueConverter`; both `Convert` and `ConvertBack` take `string language` instead of `CultureInfo culture`. |
@@ -262,19 +265,23 @@ For a standard control's pointer-over, pressed, disabled, selected, or focused b
 
 ## Window Content
 
-WinUI `Window` is not a `FrameworkElement`. A common structure is a thin window that hosts a page or user control:
+For top-level windows, prefer `WinUIEx.WindowEx` or an existing base derived from it, with a `Page` or `UserControl` as the content. Declare supported window settings in XAML; use raw `AppWindow`/presenter code only for behavior the window base does not expose. WinUI `Window`, including `WindowEx`, is not a `FrameworkElement`.
 
 ```xml
-<Window
+<winuiex:WindowEx
     x:Class="MyApp.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:views="using:MyApp.Views">
+    xmlns:views="using:MyApp.Views"
+    xmlns:winuiex="using:WinUIEx"
+    MinWidth="480"
+    MinHeight="320"
+    IsResizable="True">
     <views:MainPage />
-</Window>
+</winuiex:WindowEx>
 ```
 
-Place `DataContext`, local resources, and visual states on the hosted view or its root element; see [Threading and Windowing](threading-and-windowing.md).
+Match the code-behind base class to `WindowEx`. Place `DataContext`, local resources, and visual states on the hosted view or its root element; see [Threading and Windowing](threading-and-windowing.md).
 
 ## WPF Property and Event Differences
 
@@ -289,7 +296,7 @@ Place `DataContext`, local resources, and visual states on the hosted view or it
 | `IsDefault` / `IsCancel` | `AccentButtonStyle` supplies primary-action styling only; handle Enter/Escape/keyboard accelerators where the containing surface does not provide them. |
 | `PreviewMouse*` | Redesign with pointer events; there is no blanket name substitution. |
 | `PreviewKeyDown` / `PreviewKeyUp` | Available on WinUI `UIElement`; keep when behavior still fits. |
-| `Mouse*` handlers | Use pointer/gesture events and update event argument types. |
+| `Mouse*` handlers | Use pointer/gesture events and update event argument types; see the [input event map](namespace-api-mapping.md#input-and-routed-events) for signatures, right-button release, and handled events. |
 
 If `Opacity="0"` replaces `Visibility.Hidden`, decide whether the element should remain hit-testable and accessible. Hiding pixels while retaining interaction is often a bug.
 
@@ -303,7 +310,7 @@ Map each library control's behavior before removing its namespace and package. C
 
 | WPF-UI item | WinUI migration |
 |---|---|
-| `ui:FluentWindow` / `ui:TitleBar` | A WinUI window with the target SDK's title-bar APIs; preserve custom drag regions and caption behavior. See [Threading and Windowing](threading-and-windowing.md). |
+| `ui:FluentWindow` / `ui:TitleBar` | `WinUIEx.WindowEx` with the target SDK's title-bar APIs; prefer its XAML properties and preserve custom drag regions and caption behavior. See [Threading and Windowing](threading-and-windowing.md). |
 | `ui:ThemesDictionary` / `ui:ControlsDictionary` | Replace the WPF dictionaries with `XamlControlsResources` and application theme resources, as shown above. |
 | `ui:NumberBox` | Native `NumberBox`; set `Mode=TwoWay` when user edits must update the source. |
 | `ui:InfoBar` / `ui:SymbolIcon` / `ui:Button` | Native controls with the same names; recheck enum values and custom styles. |

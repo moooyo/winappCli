@@ -22,8 +22,8 @@ Port bounded groups of files in dependency order:
 
 1. **Project files** — prepare the WinUI target, package references, XAML/resource items, native references, and assets. Keep assembly names and deployment settings required by existing callers.
 2. **Models and shared logic** — remove UI-framework dependencies from reusable logic. Share CLI/UI behavior through a library when needed, without executable-to-executable project references.
-3. **MVVM** — adapt observable properties and commands. When adopting CommunityToolkit.Mvvm, preserve setter transformations, defaults, serialization attributes, notifications, and command behavior.
-4. **Resource strings** — migrate XAML-localized strings to `.resw`, connect the generated PRI resource index and accessor, and keep stable keys.
+3. **MVVM** — replace custom observable/command infrastructure with CommunityToolkit.Mvvm. Preserve setter transformations, defaults, serialization attributes, notifications, and command behavior.
+4. **Resource strings** — migrate the application's `.resx` strings and their code/XAML consumers to `.resw`, connect the PRI resource index and accessor, and keep stable keys.
 5. **Services and imaging** — replace WPF types and propagate asynchronous APIs through callers. Preserve codec, metadata, cancellation, and error behavior.
 6. **View models** — move UI updates onto their owning dispatcher queue and adapt binding/command notifications.
 7. **Views and pages** — start with leaf views. Port markup, styles, converters, templates, keyboard behavior, and accessibility.
@@ -32,7 +32,7 @@ Port bounded groups of files in dependency order:
 10. **Installer and build pipeline** — update resource/component inventories, output paths, signing inputs, and build/publish dependencies for the resulting artifacts.
 11. **Tests** — adapt async calls, resource access, pixel/metadata assertions, settings fixtures, and integration scenarios.
 
-After each group, use the repository-approved checks that exercise the changed behavior. Keep failures attributable to that group.
+Compile each migrated group and run its relevant tests when the repository permits those checks. Follow restrictions that defer builds to final acceptance, and keep failures attributable to the changed group.
 
 ## Migration Rules
 
@@ -42,7 +42,10 @@ After each group, use the repository-approved checks that exercise the changed b
 - Remove WPF-only dependencies and project items once their callers have been ported. Do not add `UseWPF` or a WPF framework reference to the WinUI application to conceal an incomplete conversion.
 - Change `WindowsPackageType`, `WindowsAppSDKSelfContained`, `SelfContained`, or package identity only as part of the chosen deployment configuration.
 - Keep reusable logic out of executable project references; check unexpected copied executables, dependency files, and runtime configuration files in the output.
-- Follow existing window and MVVM conventions. Use WinUIEx or Toolkit components when the project adopts them for the required behavior.
+- Use CommunityToolkit.Mvvm for migrated observable properties and commands. Prefer source-generated partial properties with a supported compiler and Toolkit version.
+- Inject or resolve services through dependency injection; do not construct service implementations in views or view models. Register services during application setup.
+- Prefer `WinUIEx.WindowEx` or an existing base derived from it for top-level windows. Declare supported window settings in XAML and use raw `AppWindow`/presenter calls for behavior the helper does not expose.
+- Use `ContentDialog` for in-app dialogs and `Frame`/`Page` for sub-views. Reserve separate windows for distinct top-level surfaces.
 - Preserve JSON names, enum values, defaults, resource keys, CLI options, and IPC/COM contracts.
 
 ### XAML and resources
@@ -51,6 +54,7 @@ After each group, use the repository-approved checks that exercise the changed b
 - Use `ThemeResource` for theme-dependent resources, `StaticResource` for fixed resources, and binding/code for other dynamic values.
 - Replace WPF triggers with the appropriate visual states, bindings, or WinUI behaviors. Put state groups on a `Page`/`UserControl` content root or a control-template root.
 - Use direct Boolean `x:Bind`, existing control states, or suitable Toolkit converters before copying a WPF converter. Preserve the intended conversion and its inverse.
+- Prefer `x:Bind` for new and migrated views with known types. Use classic `Binding` where the source must be resolved through runtime `DataContext`.
 - Audit binding source, effective mode, and update timing. WPF editable properties that bind two-way by default need explicit `Mode=TwoWay` in WinUI.
 - Put `DataContext` and element resources on the hosted view/root element. A WinUI `Window` does not expose the WPF equivalents.
 - Preserve valid `PreviewKeyDown`/`PreviewKeyUp` handlers; redesign WPF mouse preview events according to their required behavior.

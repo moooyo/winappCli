@@ -29,7 +29,7 @@ Use this reference to classify a WPF dependency before changing it. A matching t
 | WPF type | WinUI 3 type or approach | Important difference |
 |---|---|---|
 | `Application` | `Microsoft.UI.Xaml.Application` | Activation and shutdown lifecycle differ. |
-| `Window` | `Microsoft.UI.Xaml.Window` + `AppWindow` | WinUI `Window` is not a `DependencyObject`/`FrameworkElement`. |
+| `Window` | Prefer `WinUIEx.WindowEx` or an existing base derived from it | Declare supported window settings in XAML. The underlying WinUI `Window` is not a `DependencyObject`/`FrameworkElement`; use `AppWindow` for behavior the base does not expose. |
 | `DependencyObject` / `DependencyProperty` | Same names under `Microsoft.UI.Xaml` | Recheck metadata callbacks and owner types. |
 | `FrameworkElement` / `UIElement` | Same names under `Microsoft.UI.Xaml` | Event set and layout behavior are not identical. |
 | `Thickness`, `CornerRadius`, `Visibility` | Same names under `Microsoft.UI.Xaml` | `Visibility.Hidden` has no WinUI equivalent. |
@@ -42,9 +42,9 @@ Use this reference to classify a WPF dependency before changing it. A matching t
 
 ## Controls That Usually Keep Their Name
 
-Examples include `Button`, `TextBox`, `TextBlock`, `PasswordBox`, `ComboBox`, `CheckBox`, `RadioButton`, `ListBox`, `ListView`, `GridView`, `Image`, `StackPanel`, `Grid`, `Border`, `ScrollViewer`, `ContentControl`, `UserControl`, `Page`, `Frame`, `Slider`, `ProgressBar`, `ToolTip`, `ToggleButton`, `TreeView`, and `Expander`.
+Examples include `Button`, `TextBox`, `TextBlock`, `PasswordBox`, `ComboBox`, `CheckBox`, `RadioButton`, `ListBox`, `ListView`, `Image`, `StackPanel`, `Grid`, `Border`, `ScrollViewer`, `ContentControl`, `UserControl`, `Page`, `Frame`, `Slider`, `ProgressBar`, `ToolTip`, `ToggleButton`, and `Expander`.
 
-`ListBox` is available in WinUI 3; it is not deprecated.
+`ListBox` is available in WinUI 3; it is not deprecated. Prefer `ListView`, or `ItemsView` for suitable collection scenarios, when choosing a replacement.
 
 ## Controls With Different Names or Behavior
 
@@ -56,7 +56,9 @@ Examples include `Button`, `TextBox`, `TextBlock`, `PasswordBox`, `ComboBox`, `C
 | `ToolBar` / `ToolBarTray` | `CommandBar` + `AppBarButton` | No `ToolBarTray` counterpart. |
 | `StatusBar` | Custom `Grid`/`StackPanel` or `InfoBar` | No built-in `StatusBar`. |
 | `TabControl` | `TabView` or `NavigationView` in top mode | `TabView` supports closeable tabs. |
-| `DataGrid` | [WinUI.TableView](https://github.com/w-ahmad/WinUI.TableView) or an existing WinUI grid | No first-party `DataGrid`; the old Toolkit grid is archived. |
+| `DataGrid` | Prefer [WinUI.TableView](https://github.com/w-ahmad/WinUI.TableView) for new replacement code | No first-party `DataGrid`; the old Toolkit grid is archived. |
+| `ListView.View` with `GridView` / `GridViewColumn` | A column-based control such as `WinUI.TableView` | WPF `GridView` is a `ListView` view mode for columns. WinUI `GridView` is a separate control for tiled items, not that view mode; remap column bindings, selection, and sorting behavior. |
+| `TreeView` | Native `TreeView` | Its hierarchy and data-binding model differ from WPF; port hierarchical templates and selection/expansion bindings explicitly. |
 | `WrapPanel` | Toolkit `WrapPanel` | See the package map below. |
 | `UniformGrid` | Toolkit `UniformGrid` | Lays out child elements in uniform rows/columns. |
 | `DockPanel` | Toolkit `DockPanel` | See the package map below. |
@@ -91,15 +93,28 @@ Examples include `Button`, `TextBox`, `TextBlock`, `PasswordBox`, `ComboBox`, `C
 | `MouseEnter` / `MouseLeave` | `PointerEntered` / `PointerExited` | Recheck capture and child-element behavior. |
 | `MouseDoubleClick` | `DoubleTapped` or click-count handling | Gesture semantics may differ. |
 | `MouseRightButtonDown` | `RightTapped` or `PointerPressed` with right-button inspection | Choose gesture versus raw pointer semantics. |
+| `MouseRightButtonUp` | Inspect `PointerReleased` and, for other button transitions, `PointerMoved` | Identify `PointerUpdateKind.RightButtonReleased`; `IsRightButtonPressed` is false after release. Use `RightTapped` for a context-menu gesture, not a raw button-up handler. |
 | WPF `PreviewMouse*` | No mechanical mapping | Redesign with pointer events, capture, handled-events-too registration, or parent/child ownership. |
 | `PreviewKeyDown` / `PreviewKeyUp` | Same event names on WinUI `UIElement` | These tunneling key events exist; do not delete them based on a blanket “no preview events” rule. |
 | `KeyDown` / `KeyUp` | Same names with `KeyRoutedEventArgs` | Recheck accelerator, focus, and handled behavior. |
+| `MouseEventArgs` | `Microsoft.UI.Xaml.Input.PointerRoutedEventArgs` | Update the handler signature as well as the event name. |
+
+While a mouse button owns the pointer, other mouse-button transitions arrive through `PointerMoved`. To preserve an individual right-button release, inspect `e.GetCurrentPoint(element).Properties.PointerUpdateKind` in both events for `Microsoft.UI.Input.PointerUpdateKind.RightButtonReleased`.
+
+When existing behavior must observe a routed event that a control has already marked handled, use `AddHandler`:
+
+```csharp
+myElement.AddHandler(UIElement.PointerPressedEvent,
+    new Microsoft.UI.Xaml.Input.PointerEventHandler(OnPointerPressed), handledEventsToo: true);
+```
+
+`OnPointerPressed` takes `(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)`. This observes handled events in their normal route; it does not recreate WPF mouse tunneling.
 
 ## Commands and Binding APIs
 
 | WPF | WinUI option |
 |---|---|
-| `RoutedUICommand` / `CommandBinding` | Bind a C# `System.Windows.Input.ICommand`, use an existing MVVM command, or use `StandardUICommand`/`XamlUICommand` where platform semantics fit. |
+| `RoutedUICommand` / `CommandBinding` | Bind a C# `System.Windows.Input.ICommand` implemented with CommunityToolkit.Mvvm's `RelayCommand` / `[RelayCommand]`; use `StandardUICommand`/`XamlUICommand` where platform semantics fit. |
 | `ApplicationCommands.*` | Platform command, keyboard accelerator, or application-owned command. |
 | `IValueConverter` with `CultureInfo` | WinUI converter with `string language`; use the [converter decision guide](xaml-migration.md#value-converter-decision-guide) for visual states, built-in conversions, and Toolkit choices. |
 | `MultiBinding` | `x:Bind` function binding or a computed view-model property. |
@@ -118,13 +133,16 @@ Examples include `Button`, `TextBox`, `TextBlock`, `PasswordBox`, `ComboBox`, `C
 | `SystemParameters` / `SystemColors` | Theme/system resources, `DisplayInformation`, or Win32 APIs depending on the value. |
 | Pack URI | Package/application URI appropriate to the asset and deployment model; commonly `ms-appx:///` for packaged content. |
 
-## Optional Package Migration
+## Package Migration
 
 | WPF package or feature | Candidate |
 |---|---|
-| `Microsoft.Xaml.Behaviors.Wpf` | `Microsoft.Xaml.Behaviors.WinUI.Managed`, if behaviors remain the chosen approach. |
+| `Microsoft.Xaml.Behaviors.Wpf` | `Microsoft.Xaml.Behaviors.WinUI.Managed`. |
+| Additional XAML interactions | `CommunityToolkit.WinUI.Behaviors`, with `using:CommunityToolkit.WinUI.Behaviors`. |
 | WPF-UI/Lepo controls | Native WinUI controls; see [XAML Migration](xaml-migration.md#wpf-ui-and-other-wpf-control-libraries). |
-| Custom observable/command base | Existing MVVM framework or CommunityToolkit.Mvvm if an MVVM migration is explicitly in scope. |
+| Custom `Observable` / `RelayCommand` base | Replace with CommunityToolkit.Mvvm's `ObservableObject`, `[ObservableProperty]`, and `[RelayCommand]`; preserve behavior as described in [Project and Application Migration](project-and-application-migration.md#mvvm-migration). |
+| `CommunityToolkit.Mvvm` | Keep the same package. |
+| Top-level windows | `WinUIEx`; prefer `WindowEx` and its XAML properties. See [Threading and Windowing](threading-and-windowing.md). |
 | `Microsoft.Toolkit.Wpf.*` | `CommunityToolkit.WinUI.*` packages listed below. |
 
 ### Toolkit controls and package names
@@ -140,7 +158,7 @@ These optional `Controls.*` packages share a XAML namespace that differs from th
 | Settings rows / sections | `SettingsCard`, `SettingsExpander` | `CommunityToolkit.WinUI.Controls.SettingsControls` | `using:CommunityToolkit.WinUI.Controls` |
 | Resizable panes / content | `GridSplitter`, `PropertySizer`, `ContentSizer` | `CommunityToolkit.WinUI.Controls.Sizers` | `using:CommunityToolkit.WinUI.Controls` |
 
-`Primitives` also supplies `ConstrainedBox` and `SwitchPresenter`. For converters and ancestor binding, see [XAML Migration](xaml-migration.md#value-converter-decision-guide): `CommunityToolkit.WinUI.Converters` uses `using:CommunityToolkit.WinUI.Converters`, while `CommunityToolkit.WinUI.Extensions` exposes `FrameworkElementExtensions` through `using:CommunityToolkit.WinUI`.
+`Primitives` also supplies `ConstrainedBox`, `SwitchPresenter`, [`WrapLayout`](https://learn.microsoft.com/dotnet/api/communitytoolkit.winui.controls.wraplayout) for virtualized wrapping, and [`StaggeredPanel`](https://learn.microsoft.com/dotnet/api/communitytoolkit.winui.controls.staggeredpanel) for columns of uneven-height items. They use the same `CommunityToolkit.WinUI.Controls` namespace. For converters and ancestor binding, see [XAML Migration](xaml-migration.md#value-converter-decision-guide): `CommunityToolkit.WinUI.Converters` uses `using:CommunityToolkit.WinUI.Converters`, while `CommunityToolkit.WinUI.Extensions` exposes `FrameworkElementExtensions` through `using:CommunityToolkit.WinUI`.
 
 The legacy `CommunityToolkit.WinUI.UI.Controls.DataGrid` package is an archived option for existing grid code, not the current `Controls.*` family. Use package versions compatible with the target Windows App SDK.
 
@@ -167,3 +185,6 @@ See the [CsWinRT usage guide](https://github.com/microsoft/CsWinRT/blob/master/d
 - [Archived Windows Community Toolkit DataGrid](https://learn.microsoft.com/dotnet/communitytoolkit/archive/windows/datagrid)
 - [Commanding in Windows apps](https://learn.microsoft.com/windows/apps/develop/ui/controls/commanding)
 - [`System.Windows.Input.ICommand`](https://learn.microsoft.com/dotnet/api/system.windows.input.icommand)
+- [WPF `GridView`](https://learn.microsoft.com/dotnet/api/system.windows.controls.gridview) and [WinUI `GridView`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.controls.gridview)
+- [`PointerReleased` and mouse-button routing](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.uielement.pointerreleased), [`PointerUpdateKind`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.input.pointerupdatekind), and [`AddHandler`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.uielement.addhandler)
+- [Toolkit behaviors](https://learn.microsoft.com/dotnet/communitytoolkit/windows/behaviors/) and [`KeyDownTriggerBehavior` package/namespace](https://learn.microsoft.com/dotnet/api/communitytoolkit.winui.behaviors.keydowntriggerbehavior)
