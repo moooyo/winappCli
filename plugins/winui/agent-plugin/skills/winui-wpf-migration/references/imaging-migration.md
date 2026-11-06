@@ -73,6 +73,8 @@ await encoder.FlushAsync();
 
 Before calling `SetSoftwareBitmap`, request or convert to a pixel format accepted by the encoder path (commonly `Bgra8`, `Rgba8`, or `Rgba16` as supported). Keep that bitmap alive until its frame is committed, then dispose it. Do not pass an arbitrary decoded gray/indexed format with a mismatched alpha mode.
 
+[`BitmapTransform`](https://learn.microsoft.com/uwp/api/windows.graphics.imaging.bitmaptransform) applies scale, flip, rotation, then crop. `ScaledWidth`/`ScaledHeight` use the source axes; `Bounds` uses the coordinates after scaling, flipping, rotation, and any applied EXIF orientation. For example, scaling to `100x50` before a 90-degree rotation produces `50x100`.
+
 Preserve the scaling choice with these mappings:
 
 | WPF `BitmapScalingMode` | WinRT `BitmapInterpolationMode` |

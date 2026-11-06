@@ -146,6 +146,8 @@ WPF `DataTemplate.DataType` has two roles: it describes the data type and, for a
 
 For a reusable WinUI template, give it an `x:Key` and assign it to `ItemTemplate` or `ContentTemplate`. If the WPF view relied on implicit templates for different runtime types, preserve that selection behavior with a `DataTemplateSelector` or another explicit selection mechanism; `x:DataType` alone does not preserve it.
 
+A separate `ResourceDictionary` containing `{x:Bind}` requires `x:Class` and a code-behind constructor that calls `InitializeComponent()`. Merge an instance of that type (for example, `<local:Templates />`) rather than setting `ResourceDictionary.Source`; see [the resource dictionary guidance](https://learn.microsoft.com/windows/apps/develop/data-binding/data-binding-in-depth#resource-dictionaries-with-xbind).
+
 ## Binding Strategy
 
 Prefer `{x:Bind}` for new and migrated code for compile-time validation and generated bindings. Use classic `{Binding}` when the view must resolve its source through a runtime `DataContext`, or a reusable template cannot expose a typed source to compiled binding. Both are valid in WinUI 3.

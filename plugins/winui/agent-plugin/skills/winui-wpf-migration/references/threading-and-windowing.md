@@ -11,7 +11,7 @@ WPF `Dispatcher.Invoke` can synchronously execute a callback and propagate its r
 | `Dispatcher.CheckAccess()` | `DispatcherQueue.HasThreadAccess` |
 | `Dispatcher.VerifyAccess()` | Check the owning queue and throw when access is invalid. |
 | `Dispatcher.BeginInvoke(...)` | `DispatcherQueue.TryEnqueue(...)` |
-| `Dispatcher.Invoke(...)` | Run directly when already on the owning thread, or enqueue and explicitly await/propagate completion when required. |
+| `Dispatcher.Invoke(...)` | Preserve completion, exceptions, and the original overload's queue order; see [Awaiting Enqueued Work](#awaiting-enqueued-work). |
 | `DispatcherPriority` | `DispatcherQueuePriority` (`High`, `Normal`, `Low`); map intent, not enum names. |
 
 Preserve `VerifyAccess` as a guard on the captured owning queue; enqueueing instead would change its failure behavior:
@@ -46,7 +46,7 @@ Check whether `TryPost` returns `false` during shutdown. Use a `HasThreadAccess`
 
 ## Awaiting Enqueued Work
 
-Only wrap dispatch in a task when the caller truly needs completion, a return value, or exception propagation:
+Use a task when the caller needs completion, a return value, or exception propagation. The helper below runs inline on the owning thread; check the original WPF `Invoke` overload and its effective priority first, because non-`Send` calls queue even on that thread.
 
 ```csharp
 public static Task RunOnUiThreadAsync(
@@ -235,7 +235,9 @@ AppWindow appWindow = AppWindow.GetFromWindowId(windowId);
 
 `AppWindow` sizing APIs use physical pixels while XAML layout uses effective pixels/DIPs. Account for the target monitor's scale and for changes after moving between monitors.
 
-For a normal overlapped window, measure after the hosted view loads. Bound the available client area using the monitor's work area and the current non-client size. `ResizeClient` calculates the required window chrome; do not add a fixed title-bar height:
+For a normal overlapped window, measure after the hosted view loads. Bound the available client area using the monitor's work area and the current non-client size. `ResizeClient` calculates the required window chrome; do not add a fixed title-bar height.
+
+This example sizes both axes (`SizeToContent.WidthAndHeight`). For `Height` or `Width`, keep the other client dimension unchanged in `ResizeClient` and constrain `Measure` using that dimension divided by `RasterizationScale`; skip this content-based resize for `Manual`.
 
 ```csharp
 if (window.Content is FrameworkElement content && content.XamlRoot is { } root)
@@ -421,6 +423,7 @@ Preserve any additional initialization in the target template. Route a recognize
 
 - [`DispatcherQueue.TryEnqueue`](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.ui.dispatching.dispatcherqueue.tryenqueue)
 - [WPF `Dispatcher.BeginInvoke`](https://learn.microsoft.com/dotnet/api/system.windows.threading.dispatcher.begininvoke)
+- [WPF `Dispatcher.Invoke` overloads](https://learn.microsoft.com/dotnet/api/system.windows.threading.dispatcher.invoke)
 - [Task-based asynchronous pattern exception handling](https://learn.microsoft.com/dotnet/standard/asynchronous-programming-patterns/task-based-asynchronous-pattern-tap#exceptions)
 - [Async return types and `async void`](https://learn.microsoft.com/dotnet/csharp/asynchronous-programming/async-return-types#void-return-type)
 - [Windows App SDK 1.8 release notes](https://learn.microsoft.com/windows/apps/windows-app-sdk/release-notes/windows-app-sdk-1-8)
