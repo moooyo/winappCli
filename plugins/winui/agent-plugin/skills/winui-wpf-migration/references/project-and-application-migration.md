@@ -46,7 +46,7 @@ Do not add this item group when the target SDK already classifies the default `A
 | Old helpers and manifests | Remove unused observable/command helpers, WPF converters, and replaced manifests after checking all configurations. |
 
 Preserve assembly names, root namespaces, and internal visibility used by tests, native callers, or serialization.
-Move existing `InternalsVisibleTo` assembly attributes into `.csproj` items during migration, preserving each friend assembly's exact name and any public key:
+Keep existing `InternalsVisibleTo` attributes unless the project migration requires moving them. When using `.csproj` items, preserve each friend assembly's exact name and any public key:
 
 ```xml
 <ItemGroup>
@@ -54,7 +54,7 @@ Move existing `InternalsVisibleTo` assembly attributes into `.csproj` items duri
 </ItemGroup>
 ```
 
-Remove the old attributes and duplicate project items after moving them; preserve any configuration conditions on the declarations.
+Before removing the source attributes, confirm that SDK generation is enabled by `GenerateAssemblyInfo` and `GenerateInternalsVisibleToAttributes` for every required configuration; preserve any existing conditions. Keep the source declarations if they are still needed.
 Before completing the app conversion, check for remaining `PresentationCore`, `PresentationFramework`, `WindowsBase`, `Microsoft.WindowsDesktop.App.WPF`, and WPF-only packages.
 
 ## Shared Logic and Application Startup
