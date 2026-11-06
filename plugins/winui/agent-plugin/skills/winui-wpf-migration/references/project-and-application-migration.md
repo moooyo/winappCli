@@ -46,7 +46,9 @@ Do not add this item group when the target SDK already classifies the default `A
 | Old helpers and manifests | Remove unused observable/command helpers, WPF converters, and replaced manifests after checking all configurations. |
 
 Preserve assembly names, root namespaces, and internal visibility used by tests, native callers, or serialization.
-Keep existing `InternalsVisibleTo` attributes unless the project migration requires moving them. When using `.csproj` items, preserve each friend assembly's exact name and any public key:
+For new SDK-style projects, prefer `InternalsVisibleTo` items in the tested project's `.csproj` to keep assembly configuration together.
+When migrating an existing project, follow its assembly-attribute convention; keep valid source declarations unless consolidating assembly configuration.
+When using project items, preserve each friend assembly's exact name and any public key:
 
 ```xml
 <ItemGroup>
@@ -54,7 +56,7 @@ Keep existing `InternalsVisibleTo` attributes unless the project migration requi
 </ItemGroup>
 ```
 
-Before removing the source attributes, confirm that SDK generation is enabled by `GenerateAssemblyInfo` and `GenerateInternalsVisibleToAttributes` for every required configuration; preserve any existing conditions. Keep the source declarations if they are still needed.
+Before removing the source attributes, confirm that SDK generation is enabled by `GenerateAssemblyInfo` and `GenerateInternalsVisibleToAttributes` for every required configuration; preserve any existing conditions. Keep source declarations when SDK generation is disabled or cannot preserve those conditions.
 Before completing the app conversion, check for remaining `PresentationCore`, `PresentationFramework`, `WindowsBase`, `Microsoft.WindowsDesktop.App.WPF`, and WPF-only packages.
 
 ## Shared Logic and Application Startup
@@ -318,6 +320,8 @@ When installer validation is permitted, verify the installed app finds its runti
 
 ## References
 
+- [InternalsVisibleTo project items](https://learn.microsoft.com/dotnet/core/project-sdk/msbuild-props#internalsvisibleto)
+- [Assembly attribute migration](https://learn.microsoft.com/dotnet/standard/assembly/set-attributes-project-file#migrate-from-net-framework)
 - [Windows app packaging and deployment](https://learn.microsoft.com/windows/apps/package-and-deploy/deploy-overview)
 - [Windows App SDK self-contained deployment](https://learn.microsoft.com/windows/apps/package-and-deploy/self-contained-deploy/deploy-self-contained-apps)
 - [ResourceLoader constructors](https://learn.microsoft.com/windows/windows-app-sdk/api/winrt/microsoft.windows.applicationmodel.resources.resourceloader.-ctor)
